@@ -6,15 +6,14 @@ from datetime import datetime
 from urllib.parse import urlparse
 from playwright.sync_api import sync_playwright
 
-SESSION_FILE = "bilibili_session.json"
 
 CUSTOM_ROOM_IDS = [
-    "1762768424",
+    "2233",
 ]
 CATEGORY_URLS = [
-    "https://live.bilibili.com/p/eden/area-tags?areaId=190&parentAreaId=5",  # 电台
+    "https://live.bilibili.com/p/eden/area-tags?areaId=0&parentAreaId=1",  # 娱乐区
     "https://live.bilibili.com/p/eden/area-tags?areaId=744&parentAreaId=9",  # V歌势
-    "https://live.bilibili.com/p/eden/area-tags?&areaId=819&parentAreaId=14", # ting
+    "https://live.bilibili.com/p/eden/area-tags?&areaId=819&parentAreaId=14", # 厅
 ]
 
 ROOM_COUNT = 60
@@ -23,7 +22,7 @@ def wait_until_geetest_finished(page):
     selector = "div.geetest_panel"
 
     try:
-        page.locator(selector).wait_for(state="visible", timeout=5000)
+        page.locator(selector).first.wait_for(state="visible", timeout=5000)
 
         print("🚨 检测到验证码，请输入...")
 
@@ -48,7 +47,7 @@ def wait_until_geetest_finished(page):
 def create_context(browser):
         
     print("正在拉起浏览器..")
-    context = browser.new_context(storage_state=SESSION_FILE if os.path.exists(SESSION_FILE) else None)
+    context = browser.new_context()
     page = context.new_page()
 
     target_trigger_url = CATEGORY_URLS[0]
@@ -138,7 +137,7 @@ def check_purple_lottery(page):
         return True
     except:
         return False
-# --- 主动交互逼迫 B 站发包 ---
+
 def scan_room_by_intercept(page, room):
     room_id = get_room_id(room)
     target_url_keyword = "xlive/lottery-interface/v1/lottery/getLotteryInfoWeb"
@@ -209,8 +208,8 @@ def main():
                         return False
 
 
-            print("一轮扫描结束，休息 180 秒...")
-            time.sleep(180)
+            print("一轮扫描结束，休息 60 秒...")
+            time.sleep(60)
 
 if __name__ == "__main__":
     main()
