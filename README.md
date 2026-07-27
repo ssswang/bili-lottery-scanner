@@ -1,7 +1,7 @@
 # bili-lottery-scanner
 
 ### 📌 Overview
-**bili-lottery-scanner** uses Playwright to launch a browser, monitor specified B Zhan live-stream categories and custom room lists, intercept network requests, and detect active popularity red packets. When a valid event is found, it extracts details (prizes, entry requirements, draw time) and triggers a system beep sound alert.
+**bili-lottery-scanner** uses Playwright to launch a browser, monitor specified B Zhan live-stream categories and custom room lists, intercept network requests, and detect active popularity red packets. When a valid event is found, it extracts details (prizes, entry requirements, draw time) and triggers a system beep sound alert. You can extend this script with the power of webhook for notifications.
 
 > ⚠️ **Disclaimer**: This tool is strictly for educational, research, and personal use. 
 
@@ -11,3 +11,8 @@
 - 🛡️ **Geetest Handling**: Auto-detects Geetest captchas, alerts the user, and waits for manual completion before resuming.
 - 📋 **Flexible Scanning Targets**: Supports scanning specific target room IDs (`CUSTOM_ROOM_IDS`) and Bilibili live categories (`CATEGORY_URLS`).
 - 📊 **Detailed Info Output**: Parses prize names, prize quantities, total value (battery), draw end times, and participation conditions (e.g., Follow, Fan Badge, Guard).
+
+### 🛡️ Why Do You Need to Complete the Gapcha?
+   
+The core data for active red packets and raffles is fetched directly through `getLotteryInfoWeb`. Without passing Geetest: Bilibili blocks access to this endpoint, returning error codes like -352 (Risk Control / Request Denied). When this happens, the scanner cannot read any red packet data. After passing Geetest: Your browser session receives a valid risk-validation token, unlocking the API so the scanner can fetch prize details, entry requirements, and draw times normally.
+
