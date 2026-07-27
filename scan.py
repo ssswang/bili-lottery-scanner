@@ -14,14 +14,14 @@ from playwright.sync_api import sync_playwright
 
 # 自定义监听的房间号
 CUSTOM_ROOM_IDS = [
-    "2233",
+    # Insert any room id you always want to check
 ]
 
 # 监听的分区链接
 CATEGORY_URLS = [
     "https://live.bilibili.com/p/eden/area-tags?areaId=0&parentAreaId=1",     # 娱乐区
     "https://live.bilibili.com/p/eden/area-tags?areaId=744&parentAreaId=9",   # V歌势
-    "https://live.bilibili.com/p/eden/area-tags?&areaId=819&parentAreaId=14", # 厅
+    "https://live.bilibili.com/p/eden/area-tags?&areaId=190&parentAreaId=5", # radio
 ]
 
 # 每个分区最多抓取的房间数
@@ -35,7 +35,7 @@ def wait_until_geetest_finished(page):
     selector = "div.geetest_panel"
 
     try:
-        page.locator(selector).first.wait_for(state="visible", timeout=5000)
+        page.locator(selector).first.wait_for(state="visible", timeout=4000)
         print("🚨 检测到验证码，请输入...")
         
         alarmed = False
