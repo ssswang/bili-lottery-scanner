@@ -7,6 +7,7 @@
 import time
 import os
 import json
+import urllib.request
 import winsound
 from datetime import datetime
 from urllib.parse import urlparse
@@ -19,13 +20,13 @@ CUSTOM_ROOM_IDS = [
 
 # 监听的分区链接
 CATEGORY_URLS = [
-    "https://live.bilibili.com/p/eden/area-tags?areaId=0&parentAreaId=1",     # 娱乐区
+    # "https://live.bilibili.com/p/eden/area-tags?areaId=0&parentAreaId=1",     # 娱乐区
     "https://live.bilibili.com/p/eden/area-tags?areaId=744&parentAreaId=9",   # V歌势
     "https://live.bilibili.com/p/eden/area-tags?&areaId=190&parentAreaId=5", # radio
 ]
 
 # 每个分区最多抓取的房间数
-ROOM_COUNT = 60
+ROOM_COUNT = 40
 
 def wait_until_geetest_finished(page):
     """
@@ -106,6 +107,35 @@ def get_rooms(page, url):
     print("当前抓取到房间数量:", len(rooms))
     return rooms
 
+def get_hot_rank_rooms():
+    """
+    请求热门排行榜接口，提取 JSON 中的 roomid 并构建直播间 URL 列表
+    """
+    api_url = "https://api.live.bilibili.com/xlive/web-interface/v1/index/getHotRankList?web_location=444.7"
+    rooms = []
+    print("正在获取热门排行榜接口数据...")
+    
+    try:
+        req = urllib.request.Request(
+            api_url,
+            headers={"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64)"}
+        )
+        with urllib.request.urlopen(req, timeout=10) as response:
+            res_data = json.loads(response.read().decode("utf-8"))
+            if res_data.get("code") == 0:
+                room_list = res_data.get("data", {}).get("list", [])
+                for item in room_list:
+                    room_id = item.get("roomid")
+                    if room_id:
+                        rooms.append(f"https://live.bilibili.com/{room_id}")
+                print(f"成功获取热门榜房间数量: {len(rooms)}")
+            else:
+                print(f"❌ 获取热门榜接口失败, Code: {res_data.get('code')}")
+    except Exception as e:
+        print(f"❌ 请求热门榜接口异常: {e}")
+        
+    return rooms
+    
 def calculate_red_packets(page, data, room_id):
     """
     解析接口返回的红包JSON数据，提取并打印主播名、门槛、礼物详情以及准确的开奖时间
@@ -211,13 +241,21 @@ def main():
         
         while True:
             print("\n--- 开始新一轮全自动监听检测 ---")
-            
-            # 1. 扫描自选列表
+			# 1. 扫描自选列表
             custom_rooms = build_room_urls(CUSTOM_ROOM_IDS)
             for room in custom_rooms:
                 success = scan_room_by_intercept(page, room)
+                if success != True:
+                    return False
+                           
+			# 2. 扫描热门排行榜列表
+            hot_rooms = get_hot_rank_rooms()
+            for room in hot_rooms:
+                success = scan_room_by_intercept(page, room)
+                if success != True:
+                    return False
 
-            # 2. 扫描分区列表
+            # 3. 扫描分区列表
             for url in CATEGORY_URLS:
                 rooms = get_rooms(page, url)
                 
@@ -226,8 +264,8 @@ def main():
                     if success != True:
                         return False
 
-            print("一轮扫描结束，休息 60 秒...")
-            time.sleep(60)
+            print("一轮扫描结束，休息 10 秒...")
+            time.sleep(10)
 
 if __name__ == "__main__":
     main()
