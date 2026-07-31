@@ -99,6 +99,6 @@ Run `install.bat` on Windows to automatically install dependencies, download the
 
 ## 🛡️ Exception & Risk Control Handling
 
-* **GeeTest Captchas**: When `div.geetest_panel` appears, the script sounds a beep alarm and loops until you manually pass the verification.
-* **Rate Limits**: If B Zhan triggers risk control code `-352`, the scanner will log the warning and halt the current category scan pass.
+* **GeeTest Captchas**: When `div.geetest_panel` appears in Liver's room, the script sounds a beep alarm and loops until you manually pass the verification.
+* **Rate Limits**: If B Zhan triggers risk control code `-352` which is unlikely , the scanner will log the warning and halt the current category scan pass.
 * **Fatal Crashes**: Any top-level unhandled exception triggers `send_crash_notification` to forward the error log directly to Discord.
