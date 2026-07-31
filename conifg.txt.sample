@@ -3,3 +3,4 @@ IM_SWITCH=0
 ROOM_COUNT=40
 CATEGORY_URLS=["https://live.bilibili.com/p/eden/area-tags?areaId=0&parentAreaId=1", "https://live.bilibili.com/p/eden/area-tags?areaId=744&parentAreaId=9", "https://live.bilibili.com/p/eden/area-tags?&areaId=190&parentAreaId=5"]
 CUSTOM_ROOM_IDS=["23","46"]
+ALERT_THRESHOLD=40

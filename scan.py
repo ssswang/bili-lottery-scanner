@@ -71,7 +71,7 @@ CATEGORY_URLS = get_list_config(CONFIG, "CATEGORY_URLS", '["https://live.bilibil
 ROOM_COUNT = get_int_config(CONFIG, "ROOM_COUNT", 40)
 IM_SWITCH = get_int_config(CONFIG, "IM_SWITCH", 0)
 DISCORD_WEBHOOK = CONFIG.get("DISCORD_WEBHOOK", "")
-
+ALERT_THRESHOLD = get_int_config(CONFIG, "ALERT_THRESHOLD", 40)
 def send_notification(username, room_id, gift_text, requirement_str, total_price, end_time_str):
     if not DISCORD_WEBHOOK:
         print("DISCORD_WEBHOOK is not configured; skipping notification.")
@@ -330,9 +330,10 @@ def calculate_red_packets(page, data, room_id):
             print("-" * 40)
             
 
-        if '小花花' not in gifts_text and total_price > 40 and IM_SWITCH:
+        if '小花花' not in gifts_text and total_price > ALERT_THRESHOLD:
             alarm()
-            send_notification(username, room_id, gifts_text, requirement_str, total_price, end_time_str)
+            if IM_SWITCH:
+                send_notification(username, room_id, gifts_text, requirement_str, total_price, end_time_str)
 
 
 def scan_room_by_intercept(page, room):

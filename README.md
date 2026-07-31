@@ -52,6 +52,11 @@ The script parses `config.txt` located in the root directory:
       <td><code>40</code></td>
     </tr>
     <tr>
+      <td><code>ALERT_THRESHOLD</code></td>
+      <td>Alert will be sent when total battery greater than this number</td>
+      <td><code>40</code></td>
+    </tr>
+    <tr>
       <td><code>CATEGORY_URLS</code></td>
       <td>List of category page URLs (JSON Array format)</td>
       <td><code>["https://live.bilibili.com/p/eden/area-tags?..."]</code></td>
