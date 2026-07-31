@@ -27,14 +27,42 @@ A monitoring and alert script for B Zhan live stream red packets without login, 
 
 The script parses `config.txt` located in the root directory:
 
-| Key | Description | Default / Example |
-| :--- | :--- | :--- |
-
-| `IM_SWITCH` | Push notification toggle (`1` = Enabled, `0` = Disabled) | `1` |
-| `DISCORD_WEBHOOK` | Discord Webhook URL for pushing notifications | `"https://discord.com/api/webhooks/..."` |
-| `ROOM_COUNT` | Maximum number of rooms to extract per category page | `40` |
-| `CATEGORY_URLS` | List of category page URLs (JSON Array format) | `["https://live.b.com/p/eden/area-tags?areaId=0&parentAreaId=1", ...]` |
-| `CUSTOM_ROOM_IDS` | List of specific room IDs to scan first (JSON Array format) | `[]` |
+<table>
+  <thead>
+    <tr>
+      <th>Key</th>
+      <th>Description</th>
+      <th>Default / Example</th>
+    </tr>
+  </thead>
+  <tbody>
+     <tr>
+      <td><code>IM_SWITCH</code></td>
+      <td>Push Discord notification toggle (<code>1</code> = Enabled, <code>0</code> = Disabled)</td>
+      <td><code>0</code></td>
+    </tr>
+    <tr>
+      <td><code>DISCORD_WEBHOOK</code></td>
+      <td>Discord Webhook URL for alert notifications</td>
+      <td><code>"https://discord.com/api/webhooks/..."</code></td>
+    </tr>
+    <tr>
+      <td><code>ROOM_COUNT</code></td>
+      <td>Maximum number of rooms to extract per category page</td>
+      <td><code>40</code></td>
+    </tr>
+    <tr>
+      <td><code>CATEGORY_URLS</code></td>
+      <td>List of category page URLs (JSON Array format)</td>
+      <td><code>["https://live.bilibili.com/p/eden/area-tags?..."]</code></td>
+    </tr>
+    <tr>
+      <td><code>CUSTOM_ROOM_IDS</code></td>
+      <td>List of specific room IDs to scan first (JSON Array format)</td>
+      <td><code>[]</code></td>
+    </tr>
+  </tbody>
+</table>
 
 ---
 
