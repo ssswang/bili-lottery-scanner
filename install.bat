@@ -35,22 +35,6 @@ echo Using %PYTHON%
 
 echo.
 echo ============================================
-echo Upgrading pip...
-echo ============================================
-
-%PYTHON% -m pip install --upgrade pip
-
-echo.
-echo ============================================
-echo Creating requirements.txt...
-echo ============================================
-
-(
-echo playwright
-) > requirements.txt
-
-echo.
-echo ============================================
 echo Installing Python packages...
 echo ============================================
 
@@ -67,9 +51,6 @@ echo.
 echo ============================================
 echo Installation Complete!
 echo ============================================
-
-echo Installed package:
-echo   - playwright
 echo.
 
 
