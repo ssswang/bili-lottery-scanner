@@ -53,7 +53,7 @@ The script parses `config.txt` located in the root directory:
     </tr>
     <tr>
       <td><code>PURPLE_ALERT_THRESHOLD</code></td>
-      <td>🟪🧧 Alert will be sent when total battery greater than this number</td>
+      <td>🟪🧧 Alert will be sent when total per capital prize battery greater than this number</td>
       <td><code>10</code></td>
     </tr>
     <tr>
