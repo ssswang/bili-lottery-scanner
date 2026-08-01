@@ -356,10 +356,10 @@ def calculate_red_packets(page, red_packets, room_id):
         print("-" * 40)
 
     # 3. 改为判断 max_total > RED_ALERT_THRESHOLD，并在通知中传入最大红包价值
-        if '小花花' not in gifts_text and max_total > RED_ALERT_THRESHOLD:
-            alarm()
-            if IM_SWITCH:
-                send_notification(username, room_id, gifts_text, requirement_str, max_total, end_time_str)
+    if '小花花' not in gifts_text and max_total > RED_ALERT_THRESHOLD:
+        alarm()
+        if IM_SWITCH:
+            send_notification(username, room_id, gifts_text, requirement_str, max_total, end_time_str)
 
 
 def scan_room_by_intercept(page, room):
