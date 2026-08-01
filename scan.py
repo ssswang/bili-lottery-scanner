@@ -320,7 +320,7 @@ def calculate_anchor_lottery(page, anchor_data, room_id):
                 gift_text=gift_line,
                 requirement_str=require_text,
                 total_price=total_price,
-                end_time_str=award_goaway_time
+                end_time_str=formatted_new_datetime
             )
 
 
