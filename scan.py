@@ -294,16 +294,15 @@ def calculate_anchor_lottery(page, anchor_data, room_id):
     username = get_room_username(page)
 
 
-
+    print(f"🎉 [=== 发现天选抽奖！主播: {username} | 房间: {room_id} ===]")
+    gift_line = f"🎁 奖品: {award_name} x {award_num}"
+    print(f" {gift_line}")
+    print(f" 🔒 参与门槛: {require_text}")
+    print(f" 💰 计算价值: {total_price} 电池 (单份数量:{award_per_capita})")
+    print(f" 💰 关闭时间: {award_goaway_time // 60} 分钟")
+    print("-" * 40)
     # 价值大于 PURPLE_ALERT_THRESHOLD 则报警并发送通知
     if total_price > PURPLE_ALERT_THRESHOLD:
-        print(f"🎉 [=== 发现天选抽奖！主播: {username} | 房间: {room_id} ===]")
-        gift_line = f"🎁 奖品: {award_name} x {award_num}"
-        print(f" {gift_line}")
-        print(f" 🔒 参与门槛: {require_text}")
-        print(f" 💰 计算价值: {total_price} 电池 (单份数量:{award_per_capita})")
-        print(f" 💰 关闭时间: {award_goaway_time // 60} 分钟")
-        print("-" * 40)
         alarm()
         if IM_SWITCH:
             send_notification(
