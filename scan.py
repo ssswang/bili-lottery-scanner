@@ -338,7 +338,7 @@ def calculate_red_packets(page, data, room_id):
 
 def scan_room_by_intercept(page, room):
     """
-    核心检测函数：进入直播间，定位红包图标并执行悬停（Hover）操作，
+    核心检测函数：进入直播间，定位红包图标，
     触发B端JS加载，拦截并解析 getLotteryInfoWeb 接口数据。
     """
     room_id = get_room_id(room)
@@ -355,11 +355,11 @@ def scan_room_by_intercept(page, room):
             # owner_element.wait_for(state="attached", timeout=1000)
             # username = (owner_element.text_content()).strip()
             # print(username)
-            # 查找红包图标并悬停触发
+            # 查找红包图标
             packet_btn = page.locator(packet_icon_selector)
             try:
                 packet_btn.wait_for(state="attached", timeout=2000)
-                packet_btn.hover()
+                
             except:
                 # 2秒内未发现红包图标则直接跳过
                 return True
