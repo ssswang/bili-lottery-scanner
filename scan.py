@@ -12,7 +12,7 @@ import winsound
 import requests
 import traceback  
 import urllib.request
-from datetime import datetime
+from datetime import datetime, timedelta
 from urllib.parse import urlparse
 from playwright.sync_api import sync_playwright
 
@@ -287,19 +287,28 @@ def calculate_anchor_lottery(page, anchor_data, room_id):
     award_price_text = anchor_data.get("award_price_text", "")
     award_per_capita = anchor_data.get("award_per_capita", 1)
     award_goaway_time = anchor_data.get("time", -1)
+    
     # 从 "价值52电池" 中出数字
     price_match = re.search(r"价值(\d+)电池", award_price_text)
     total_price = int(price_match.group(1)) if price_match else 0
 
     username = get_room_username(page)
 
+    now = datetime.now()
+    seconds_to_add = int(award_goaway_time)
+    # 2. Define seconds to add and calculate the new datetime
+    new_datetime = now + timedelta(seconds=seconds_to_add)
+
+    # 3. Format the new datetime into a string
+    # Common format: YYYY-MM-DD HH:MM:SS
+    formatted_new_datetime = new_datetime.strftime("%Y-%m-%d %H:%M:%S")
 
     print(f"🎉 [=== 发现天选抽奖！主播: {username} | 房间: {room_id} ===]")
-    gift_line = f"🎁 奖品: {award_name} x {award_num}"
+    gift_line = f"🟪 奖品: {award_name} 最大中奖人数: {award_num}"
     print(f" {gift_line}")
     print(f" 🔒 参与门槛: {require_text}")
     print(f" 💰 计算价值: {total_price} 电池 (单份数量:{award_per_capita})")
-    print(f" 💰 关闭时间: {award_goaway_time // 60} 分钟")
+    print(f" 💰 关闭时间: {formatted_new_datetime}")
     print("-" * 40)
     # 价值大于 PURPLE_ALERT_THRESHOLD 则报警并发送通知
     if total_price > PURPLE_ALERT_THRESHOLD:
