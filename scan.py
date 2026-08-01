@@ -286,7 +286,7 @@ def calculate_anchor_lottery(page, anchor_data, room_id):
     award_num = anchor_data.get("award_num", 1)
     award_price_text = anchor_data.get("award_price_text", "")
     award_per_capita = anchor_data.get("award_per_capita", 1)
-    award_goaway_time = anchor_data.get("goaway_time", -1)
+    award_goaway_time = anchor_data.get("time", -1)
     # 从 "价值52电池" 中出数字
     price_match = re.search(r"价值(\d+)电池", award_price_text)
     total_price = int(price_match.group(1)) if price_match else 0
