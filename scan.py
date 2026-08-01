@@ -63,7 +63,7 @@ def get_list_config(config, key, default):
 
 
 CONFIG = load_external_config()
-CUSTOM_ROOM_IDS = get_list_config(CONFIG, "CUSTOM_ROOM_IDS", "[1852636821]")
+CUSTOM_ROOM_IDS = get_list_config(CONFIG, "CUSTOM_ROOM_IDS", "[]")
 CATEGORY_URLS = get_list_config(CONFIG, "CATEGORY_URLS", '["https://live.bilibili.com/p/eden/area-tags?areaId=0&parentAreaId=1", "https://live.bilibili.com/p/eden/area-tags?&areaId=190&parentAreaId=5"]')
 ROOM_COUNT = get_int_config(CONFIG, "ROOM_COUNT", 40)
 IM_SWITCH = get_int_config(CONFIG, "IM_SWITCH", 0)
