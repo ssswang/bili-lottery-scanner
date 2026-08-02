@@ -70,7 +70,7 @@ IM_SWITCH = get_int_config(CONFIG, "IM_SWITCH", 0)
 DISCORD_WEBHOOK = CONFIG.get("DISCORD_WEBHOOK", "")
 RED_ALERT_AVG_THRESHOLD = get_int_config(CONFIG, "RED_ALERT_AVG_THRESHOLD", 3)
 PURPLE_ALERT_THRESHOLD = get_int_config(CONFIG, "PURPLE_ALERT_THRESHOLD", 9)
-
+BEEP_SWITCH = get_int_config(CONFIG, "BEEP_SWITCH", 1)
 def send_lottery_notification(username, room_id, gift_text, requirement_str, total_price, end_time_str):
     """
     装配discord通知
@@ -230,7 +230,8 @@ def get_room_id(room_url):
 
 
 def alarm():
-    winsound.Beep(1200, 800)
+    if BEEP_SWITCH:
+        winsound.Beep(1200, 800)
 
 
 def get_hot_rank_rooms():
@@ -376,7 +377,7 @@ def calculate_red_packets(page, red_packets, room_id):
         awards = packet.get("awards") or []
         for award in awards:
             num = award.get('num', 0)
-            gift_line = f"🎁 礼物: {award.get('gift_name')} 最大中奖人数: {num}"
+            gift_line = f" 🎁 礼物: {award.get('gift_name')} 最大中奖人数: {num}"
             gifts_text += f"\n{gift_line}" if gifts_text else gift_line
             packet_item_count += num
         
@@ -389,9 +390,7 @@ def calculate_red_packets(page, red_packets, room_id):
         if current_packet_avg > max_avg:
             max_avg = current_packet_avg
 
-    print(f"🔥 [=== 发现红包！主播: {username} | 房间: {room_id} ===]")
-    print(f" 🔒 门槛: {requirement_str} | 最大包价值: {max_total} 电池 | 最高包均: {max_avg:.2f} 电池/人")
-    print("-" * 40)
+    print(f"ψ(._. )> 发现红包！主播: {username} | 房间: {room_id} | 最大包价值: {max_total} 电池 | 最高包均: {max_avg:.2f} 电池/人")
     # 4. 判断人均价值是否大于设定的阈值
     if max_avg > RED_ALERT_AVG_THRESHOLD:
         alarm()
