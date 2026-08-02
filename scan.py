@@ -68,12 +68,12 @@ CATEGORY_URLS = get_list_config(CONFIG, "CATEGORY_URLS", '["https://live.bilibil
 ROOM_COUNT = get_int_config(CONFIG, "ROOM_COUNT", 40) 
 IM_SWITCH = get_int_config(CONFIG, "IM_SWITCH", 0)
 DISCORD_WEBHOOK = CONFIG.get("DISCORD_WEBHOOK", "")
-RED_ALERT_AVG_THRESHOLD = get_int_config(CONFIG, "RED_ALERT_AVG_THRESHOLD", 4)
+RED_ALERT_AVG_THRESHOLD = get_int_config(CONFIG, "RED_ALERT_AVG_THRESHOLD", 3)
 PURPLE_ALERT_THRESHOLD = get_int_config(CONFIG, "PURPLE_ALERT_THRESHOLD", 9)
 
-def send_notification(username, room_id, gift_text, requirement_str, total_price, end_time_str):
+def send_lottery_notification(username, room_id, gift_text, requirement_str, total_price, end_time_str):
     """
-    异步发送通知
+    装配discord通知
     """
     payload = {
         "embeds": [
@@ -126,7 +126,7 @@ def send_crash_notification(error_msg):
     """
     程序崩溃 alert
     """
-    print(f"💥 程序发生致命崩溃，正在发送 Discord 通知...\n{error_msg}")
+    print(f"💥 程序发生崩溃，正在发送 Discord 通知...\n{error_msg}")
     payload = {
         "embeds": [
             {
@@ -162,7 +162,7 @@ def send_interaction_notification(msg):
 
 def post_discord(payload):
     if not DISCORD_WEBHOOK:
-        print("DISCORD_WEBHOOK is not configured; skipping crash notification.")
+        print("DISCORD_WEBHOOK is not configured; skipping notification.")
         return
     try:
         response = requests.post(DISCORD_WEBHOOK, json=payload, timeout=10)
@@ -190,8 +190,8 @@ def wait_until_geetest_finished(page):
         while page.locator(selector).count():
             elapsed_time = time.time() - start_time
             if elapsed_time > max_wait_seconds:
-                send_interaction_notification("❌ 验证码等待超时（10分钟），程序退出。")
-                raise TimeoutError("验证码等待超时，超过 10 分钟未完成输入。")
+                send_interaction_notification("❌ 验证码等待超时，程序退出。")
+                raise TimeoutError("验证码等待超时，超过 5 分钟未完成输入。")
 
             if not alarmed:
                 alarm()
@@ -339,7 +339,7 @@ def calculate_anchor_lottery(page, anchor_data, room_id):
     if total_price > PURPLE_ALERT_THRESHOLD and award_goaway_time > 20:
         alarm()
         if IM_SWITCH:
-            send_notification(username, room_id, gift_line, require_text, total_price, formatted_new_datetime)
+            send_lottery_notification(username, room_id, gift_line, require_text, total_price, formatted_new_datetime)
 
 def calculate_red_packets(page, red_packets, room_id):
     """
@@ -390,7 +390,7 @@ def calculate_red_packets(page, red_packets, room_id):
             max_avg = current_packet_avg
 
     print(f"🔥 [=== 发现红包！主播: {username} | 房间: {room_id} ===]")
-    print(f" 🔒 门槛: {requirement_str} | 最大包价值: {max_total} 电池 | 最高人均: {max_avg:.2f} 电池/人")
+    print(f" 🔒 门槛: {requirement_str} | 最大包价值: {max_total} 电池 | 最高包均: {max_avg:.2f} 电池/人")
     print("-" * 40)
     # 4. 判断人均价值是否大于设定的阈值
     if max_avg > RED_ALERT_AVG_THRESHOLD:
@@ -399,7 +399,7 @@ def calculate_red_packets(page, red_packets, room_id):
         print(f" 🕒 开奖时间: {end_time_str} 之后")
         print("-" * 40)
         if IM_SWITCH:
-            send_notification(username, room_id, gifts_text, requirement_str, max_total, end_time_str)
+            send_lottery_notification(username, room_id, gifts_text, requirement_str, max_total, end_time_str)
 
 def scan_room_by_intercept(page, room):
     room_id = get_room_id(room)
@@ -425,7 +425,7 @@ def scan_room_by_intercept(page, room):
     try:
         page.goto(room)
         wait_until_geetest_finished(page)
-
+        page.mouse.wheel(0, 100)
         # 2. 检查 UI 是否有红包/天选图标
         packet_btn = page.locator(packet_icon_selector)
         try:
