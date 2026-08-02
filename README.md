@@ -64,8 +64,8 @@ The script parses `config.txt` located in the root directory:
     </tr>
     <tr>
       <td><code>RED_ALERT_AVG_THRESHOLD</code></td>
-      <td>🧧 Alert will be sent when highest <b>average battery value per prize</b> exceeds this number</td>
-      <td><code>4</code></td>
+      <td>🧧 Alert will be sent when <b>average battery value per prize</b> exceeds this number</td>
+      <td><code>3</code></td>
     </tr>
     <tr>
       <td><code>CATEGORY_URLS</code></td>
