@@ -308,7 +308,7 @@ def calculate_anchor_lottery(page, anchor_data, room_id):
     print(f" {gift_line}")
     print(f" 🔒 参与门槛: {require_text}")
     print(f" 💰 计算价值: {total_price} 电池 (单份数量:{award_per_capita})")
-    print(f" 💰 关闭时间: {formatted_new_datetime}")
+    print(f" 🕒 关闭时间: {formatted_new_datetime}")
     print("-" * 40)
     # 价值大于 PURPLE_ALERT_THRESHOLD 则报警并发送通知
     if total_price > PURPLE_ALERT_THRESHOLD:
@@ -356,11 +356,11 @@ def calculate_red_packets(page, red_packets, room_id):
 
         awards = packet.get("awards") or []
         for award in awards:
-            gift_line = f"🎁 礼物: {award.get('gift_name')} x {award.get('num')}"
+            gift_line = f"🎁 礼物: {award.get('gift_name')} 最大中奖人数: {award.get('num')}"
             print(f" {gift_line}")
             gifts_text += f"\n{gift_line}" if gifts_text else gift_line
             
-        print(f" 🔒 参与门槛类型: {requirement_str} | 单包价值: {current_packet_price} 电池")
+        print(f" 🔒 参与门槛类型: {requirement_str} | 包价值: {current_packet_price} 电池")
         print(f" 🕒 开奖时间: {end_time_str} 之后")
         print("-" * 40)
 
