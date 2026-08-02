@@ -1,6 +1,6 @@
 # B Zhan Live Lottery Scanner
 
-A monitoring and alert script for B Zhan live stream red packets without login, built with Python and Playwright. The script periodically scans custom live rooms, hot ranking streams, and specified live categories. It intercepts web API responses to analyze reward value and entry requirements, sending real-time Discord notifications for high-value rewards and alerting on script crashes.
+A monitoring and alert script for B Zhan live stream red packets and anchor lotteries without login, built with Python and Playwright. The script periodically scans custom live rooms, hot ranking streams, and specified live categories. It intercepts network API responses to analyze reward value and entry requirements, sending real-time Discord notifications for high-value rewards and alerting on script crashes.
 
 ---
 
@@ -10,16 +10,22 @@ A monitoring and alert script for B Zhan live stream red packets without login, 
   * **Custom Room List**: Prioritizes scanning user-defined room IDs (`CUSTOM_ROOM_IDS`).
   * **Hot Ranking List**: Automatically fetches and scans top live streams via the B Zhan Hot Rank API.
   * **Category Pages**: Scrolls through specified category pages (`CATEGORY_URLS`) to discover active live streams.
-* **Network Response Interception**:
+* **Zero-Miss Network Response Interception**:
   * Powered by Playwright Chromium automation.
-  * Automatically detects red envelope icons, hovers over them to trigger JavaScript requests, and intercepts `getLotteryInfoWeb` API responses.
+  * Registers network listeners **before** navigating to room pages (`page.goto`), ensuring capture of `getLotteryInfoWeb` API data.
+  * Validates red envelope / anchor lottery UI icons before processing data to maintain ultra-fast scanning speeds.
+* **Advanced Lottery & Red Packet Filters**:
+  * **Anchor Lotteries**: Filters out high-threshold requirements and low-time remaining draws.
+  * **Red Packets**: Calculates average battery value per award item to ensure only high-yield packets trigger notifications.
 * **GeeTest Captcha Detection & Audio Alarm**:
-  * Triggers a system beep (`winsound`) when a GeeTest captcha panel appears on screen, pausing execution until manually solved.
+  * Triggers a system beep (`winsound`) when a GeeTest captcha panel appears on screen.
+  * Pauses execution until manually solved, with a **5-minute timeout limit** to prevent infinite hanging.
 * **Discord Webhook Alerts**:
-  * **Lottery Alert**: Sends formatted embed notifications for lotteries valued over 40 batteries (filtering out low-value filler rewards).
-  * **Crash Alert**: Automatically catches unhandled runtime exceptions and posts the error stack trace to Discord.
+  * **Lottery & Red Packet Alerts**: Sends formatted embed notifications for lotteries that meet specified thresholds.
+  * **Crash Alert**: Automatically catches unhandled runtime exceptions and posts the stack trace to Discord.
+  * **Interaction Alert**: Sends warnings for captcha prompts or API rate limit responses.
 * **External Configuration Support**:
-  * Automatically reads key-value configuration from `config.txt` at launch.
+  * Automatically reads key-value configurations from `config.txt` at launch.
 
 ---
 
@@ -53,13 +59,13 @@ The script parses `config.txt` located in the root directory:
     </tr>
     <tr>
       <td><code>PURPLE_ALERT_THRESHOLD</code></td>
-      <td>🟪🧧 Alert will be sent when total per capital prize battery greater than this number</td>
-      <td><code>10</code></td>
+      <td>🟪 Alert will be sent when total prize battery value exceeds this number</td>
+      <td><code>9</code></td>
     </tr>
     <tr>
-      <td><code>RED_ALERT_THRESHOLD</code></td>
-      <td>🧧 Alert will be sent when total battery greater than this number</td>
-      <td><code>40</code></td>
+      <td><code>RED_ALERT_AVG_THRESHOLD</code></td>
+      <td>🧧 Alert will be sent when highest <b>average battery value per prize</b> exceeds this number</td>
+      <td><code>4</code></td>
     </tr>
     <tr>
       <td><code>CATEGORY_URLS</code></td>
@@ -73,7 +79,6 @@ The script parses `config.txt` located in the root directory:
     </tr>
   </tbody>
 </table>
-
 ---
 
 ## 🚀 Quick Start
