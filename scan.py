@@ -65,16 +65,13 @@ def get_list_config(config, key, default):
 CONFIG = load_external_config()
 CUSTOM_ROOM_IDS = get_list_config(CONFIG, "CUSTOM_ROOM_IDS", "[]")
 CATEGORY_URLS = get_list_config(CONFIG, "CATEGORY_URLS", '["https://live.bilibili.com/p/eden/area-tags?areaId=0&parentAreaId=1", "https://live.bilibili.com/p/eden/area-tags?&areaId=190&parentAreaId=5"]')
-ROOM_COUNT = get_int_config(CONFIG, "ROOM_COUNT", 40)
+ROOM_COUNT = get_int_config(CONFIG, "ROOM_COUNT", 40) 
 IM_SWITCH = get_int_config(CONFIG, "IM_SWITCH", 0)
 DISCORD_WEBHOOK = CONFIG.get("DISCORD_WEBHOOK", "")
-RED_ALERT_THRESHOLD = get_int_config(CONFIG, "RED_ALERT_THRESHOLD", 40)
-PURPLE_ALERT_THRESHOLD = get_int_config(CONFIG, "PURPLE_ALERT_THRESHOLD", 10)
+RED_ALERT_AVG_THRESHOLD = get_int_config(CONFIG, "RED_ALERT_AVG_THRESHOLD", 4)
+PURPLE_ALERT_THRESHOLD = get_int_config(CONFIG, "PURPLE_ALERT_THRESHOLD", 9)
 
 def send_notification(username, room_id, gift_text, requirement_str, total_price, end_time_str):
-    if not DISCORD_WEBHOOK:
-        print("DISCORD_WEBHOOK is not configured; skipping notification.")
-        return
     """
     异步发送通知
     """
@@ -122,66 +119,95 @@ def send_notification(username, room_id, gift_text, requirement_str, total_price
             }
         ]
     }
-
-    try:
-        response = requests.post(DISCORD_WEBHOOK, json=payload, timeout=10)
-        if response.status_code in [200, 204]:
-            print("🚀 Discord 通知异步发送成功！")
-        else:
-            print(f"❌ Webhook 发送失败，状态码: {response.status_code}")
-    except requests.RequestException as e:
-        print(f"❌ 发送通知时出现异常: {e}")
+    return post_discord(payload)
 
 
 def send_crash_notification(error_msg):
-    if not DISCORD_WEBHOOK:
-        print("DISCORD_WEBHOOK is not configured; skipping crash notification.")
-        return
     """
     程序崩溃 alert
     """
+    print(f"💥 程序发生致命崩溃，正在发送 Discord 通知...\n{error_msg}")
     payload = {
         "embeds": [
             {
-                "title": "🚨 脚本崩溃警报！",
+                "title": "🚨 脚本警报！",
                 "color": 16711680,  # 红色警告 (#FF0000)
                 "description": f"监控脚本已停止运行，请及时检查服务器或本地环境。\n\n**错误堆栈信息:**\n```python\n{error_msg[-1800:]}\n```",
                 "footer": {
-                    "text": f"崩溃时间: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}"
+                    "text": f"时间: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}"
                 }
             }
         ]
     }
+    return post_discord(payload)
+
+def send_interaction_notification(msg):
+    """
+    提示需要交互的信息
+    """
+    print(msg)
+    payload = {
+        "embeds": [
+            {
+                "title": "🚨 脚本警报！",
+                "color": 16711680,  # 警告 (#FF0000)
+                "description": f"{msg}\n",
+                "footer": {
+                    "text": f"时间: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}"
+                }
+            }
+        ]
+    }
+    return post_discord(payload)
+
+def post_discord(payload):
+    if not DISCORD_WEBHOOK:
+        print("DISCORD_WEBHOOK is not configured; skipping crash notification.")
+        return
     try:
         response = requests.post(DISCORD_WEBHOOK, json=payload, timeout=10)
         if response.status_code in [200, 204]:
-            print("🚀 Discord 崩溃通知已成功送达！")
+            print("🚀 Discord 通知已成功送达！")
         else:
-            print(f"❌ 崩溃通知发送失败，状态码: {response.status_code}")
+            print(f"❌ 通知发送失败，状态码: {response.status_code}")
     except requests.RequestException as e:
-        print(f"❌ 尝试发送崩溃通知时再次发生异常: {e}")
-
+        print(f"❌ 尝试发送通知时再次发生异常: {e}")
+    
+    return
 
 def wait_until_geetest_finished(page):
     selector = "div.geetest_panel"
+    max_wait_seconds = 300  # 5 分钟超时限制
 
     try:
+        # 等待验证码弹窗出现
         page.locator(selector).first.wait_for(state="visible", timeout=4000)
-        print("🚨 检测到验证码，请输入...")
-        
+        send_interaction_notification("🚨 检测到验证码，请输入...")
+
         alarmed = False
+        start_time = time.time()
+
         while page.locator(selector).count():
+            elapsed_time = time.time() - start_time
+            if elapsed_time > max_wait_seconds:
+                send_interaction_notification("❌ 验证码等待超时（10分钟），程序退出。")
+                raise TimeoutError("验证码等待超时，超过 10 分钟未完成输入。")
+
             if not alarmed:
                 alarm()
                 alarmed = True
+
             page.wait_for_timeout(1000)
 
-        print("✅ 验证完成，继续运行。")
+        send_interaction_notification("✅ 验证完成，继续运行。")
 
     except Exception as e:
-        if type(e).__name__ != 'TimeoutError':
-            print(e)
-        pass
+        # 如果是我们主动抛出的 10 分钟超时，向上抛出终止程序
+        if isinstance(e, TimeoutError) and "超过 5 分钟" in str(e):
+            raise e
+        # 如果是 4 秒等待超时（没出验证码），忽略即可；其他非 Timeout 异常打印 log
+        elif type(e).__name__ != "TimeoutError":
+            print(f"验证码检测流程出现异常: {e}")
 
 
 def create_context(browser):
@@ -229,7 +255,7 @@ def get_hot_rank_rooms():
             else:
                 print(f"❌ 获取热门榜接口失败, Code: {res_data.get('code')}")
     except Exception as e:
-        print(f"❌ 请求热门榜接口异常: {e}")
+        send_interaction_notification(f"❌ 请求热门榜接口异常: {e}")
     return rooms
 
 
@@ -241,7 +267,7 @@ def get_rooms(page, url):
         page.locator("#room-card-list").wait_for(timeout=7000)
 
         for _ in range((ROOM_COUNT - 20) // 20):
-            page.mouse.wheel(0, 10)
+            page.mouse.wheel(0, 100)
             page.wait_for_timeout(1500)
 
         links = page.locator("#room-card-list a[href*='live.bilibili.com/']")
@@ -291,7 +317,7 @@ def calculate_anchor_lottery(page, anchor_data, room_id):
     # 从 "价值52电池" 中出数字
     price_match = re.search(r"价值(\d+)电池", award_price_text)
     total_price = int(price_match.group(1)) if price_match else 0
-
+    gift_line = f"🟪 奖品: {award_name} 最大中奖人数: {award_num}"
     username = get_room_username(page)
 
     now = datetime.now()
@@ -302,40 +328,31 @@ def calculate_anchor_lottery(page, anchor_data, room_id):
     # 3. Format the new datetime into a string
     # Common format: YYYY-MM-DD HH:MM:SS
     formatted_new_datetime = new_datetime.strftime("%Y-%m-%d %H:%M:%S")
-
-    print(f"🎉 [=== 发现天选抽奖！主播: {username} | 房间: {room_id} ===]")
-    gift_line = f"🟪 奖品: {award_name} 最大中奖人数: {award_num}"
-    print(f" {gift_line}")
-    print(f" 🔒 参与门槛: {require_text}")
-    print(f" 💰 计算价值: {total_price} 电池 (单份数量:{award_per_capita})")
-    print(f" 🕒 关闭时间: {formatted_new_datetime}")
-    print("-" * 40)
+    if total_price > 1 and award_goaway_time > 20:
+        print(f"🎉 [=== 发现天选抽奖！主播: {username} | 房间: {room_id} ===]")
+        print(f" {gift_line}")
+        print(f" 🔒 参与门槛: {require_text}")
+        print(f" 💰 计算价值: {total_price} 电池 (单份数量:{award_per_capita})")
+        print(f" 🕒 关闭时间: {formatted_new_datetime}")
+        print("-" * 40)
     # 价值大于 PURPLE_ALERT_THRESHOLD 则报警并发送通知
-    if total_price > PURPLE_ALERT_THRESHOLD:
+    if total_price > PURPLE_ALERT_THRESHOLD and award_goaway_time > 20:
         alarm()
         if IM_SWITCH:
-            send_notification(
-                username=username,
-                room_id=room_id,
-                gift_text=gift_line,
-                requirement_str=require_text,
-                total_price=total_price,
-                end_time_str=formatted_new_datetime
-            )
-
+            send_notification(username, room_id, gift_line, require_text, total_price, formatted_new_datetime)
 
 def calculate_red_packets(page, red_packets, room_id):
     """
     解析接口返回的红包 JSON 数据
     """
     username = get_room_username(page)
-    print(f"🔥 [=== 发现红包！主播: {username} | 房间: {room_id} ===]")
+    
     gifts_text = ""
     requirement_str = ""
     end_time_str = ""
     
-    # 1. 新建 max_total 记录多个红包中的最大价值
     max_total = 0
+    max_avg = 0.0
 
     for packet in red_packets:
         join_requirement = packet.get("join_requirement")
@@ -350,79 +367,111 @@ def calculate_red_packets(page, red_packets, room_id):
         
         current_packet_price = (packet.get("total_price", 0)) // 100
         
-        # 2. 更新最大价值 max_total
+        # 1. 记录最大包总价
         if current_packet_price > max_total:
             max_total = current_packet_price
-
+        
+        # 2. 统计当前红包的礼物总份数
+        packet_item_count = 0
         awards = packet.get("awards") or []
         for award in awards:
-            gift_line = f"🎁 礼物: {award.get('gift_name')} 最大中奖人数: {award.get('num')}"
-            print(f" {gift_line}")
+            num = award.get('num', 0)
+            gift_line = f"🎁 礼物: {award.get('gift_name')} 最大中奖人数: {num}"
             gifts_text += f"\n{gift_line}" if gifts_text else gift_line
-            
-        print(f" 🔒 参与门槛类型: {requirement_str} | 包价值: {current_packet_price} 电池")
+            packet_item_count += num
+        
+        # 3. 安全计算人均价值与最大平均值（防止除以零）
+        if packet_item_count > 0:
+            current_packet_avg = current_packet_price / packet_item_count
+        else:
+            current_packet_avg = 0.0
+
+        if current_packet_avg > max_avg:
+            max_avg = current_packet_avg
+
+    print(f"🔥 [=== 发现红包！主播: {username} | 房间: {room_id} ===]")
+    print(f" 🔒 门槛: {requirement_str} | 最大包价值: {max_total} 电池 | 最高人均: {max_avg:.2f} 电池/人")
+    print("-" * 40)
+    # 4. 判断人均价值是否大于设定的阈值
+    if max_avg > RED_ALERT_AVG_THRESHOLD:
+        alarm()
+        print(f" {gifts_text}")
         print(f" 🕒 开奖时间: {end_time_str} 之后")
         print("-" * 40)
-
-    # 3. 改为判断 max_total > RED_ALERT_THRESHOLD，并在通知中传入最大红包价值
-    if '小花花' not in gifts_text and max_total > RED_ALERT_THRESHOLD:
-        alarm()
         if IM_SWITCH:
             send_notification(username, room_id, gifts_text, requirement_str, max_total, end_time_str)
 
-
 def scan_room_by_intercept(page, room):
-    """
-    核心检测函数：红包与天选图标的 Selector 监听
-    """
     room_id = get_room_id(room)
     target_url_keyword = "xlive/lottery-interface/v1/lottery/getLotteryInfoWeb"
-    # 支持人气红包以及新增的天选抽奖两个 Selector
-    packet_icon_selector = ".popularity-red-envelope-entry.gift-left-part, .anchor-lottery-entry.gift-left-part"
+    packet_icon_selector = (
+        ".popularity-red-envelope-entry.gift-left-part, "
+        ".anchor-lottery-entry.gift-left-part"
+    )
+
+    captured_json = [None]
+    is_success = True  # 默认为 True
+
+    def handle_response(response):
+        if target_url_keyword in response.url and response.status == 200:
+            try:
+                captured_json[0] = response.json()
+            except Exception:
+                pass
+
+    # 1. 在 page.goto 前先注册监听！
+    page.on("response", handle_response)
 
     try:
-        # 监听红包/抽奖接口
-        with page.expect_response(lambda response: target_url_keyword in response.url, timeout=6000) as response_info:
-            page.goto(room)
-            wait_until_geetest_finished(page)
-            page.mouse.wheel(0, 100)
+        page.goto(room)
+        wait_until_geetest_finished(page)
 
-            # 查找红包或天选抽奖图标
-            packet_btn = page.locator(packet_icon_selector)
-            try:
-                packet_btn.first.wait_for(state="attached", timeout=2000)
-            except:
-                # 2秒内未发现任何抽奖图标则跳过
-                return True
-        
-        # 解析拦截到的响应
-        response = response_info.value
-        if response.status == 200:
-            result = response.json()
+        # 2. 检查 UI 是否有红包/天选图标
+        packet_btn = page.locator(packet_icon_selector)
+        try:
+            packet_btn.first.wait_for(state="attached", timeout=2000)
+        except Exception:
+            # 2秒无图标说明无活动，走 finally 解绑后返回 True
+            return True
+
+        # 3. 确认有活动图标，等待 API 拦截填充（最多 2 秒）
+        for _ in range(4):
+            if captured_json[0] is not None:
+                break
+            page.wait_for_timeout(500)
+
+        # 4. 解析 JSON
+        result = captured_json[0]
+        if result:
             if result.get("code") == 0:
                 data = result.get("data", {})
-                
-                # 1. 只有当 popularity_red_pocket 存在时才处理红包
+
                 red_packets = data.get("popularity_red_pocket")
                 if red_packets:
                     calculate_red_packets(page, red_packets, room_id)
-                
-                # 2. 当 anchor 存在 时，才处理天选抽奖
+
                 anchor_data = data.get("anchor")
                 if anchor_data:
                     calculate_anchor_lottery(page, anchor_data, room_id)
             else:
-                print(f"❌ 房间 {room_id} 接口被拒 (Code: {result.get('code')}), 提示: {result.get('message')}")
-                if result.get("code") in [-352]: 
-                    return False
-                    
-    except Exception as e:
-        if type(e).__name__ != 'TimeoutError':
-            print(f"扫描房间 {room_id} 出错: {e}")
-        pass 
-        
-    return True
+                send_interaction_notification(
+                    f"❌ 房间 {room_id} 接口被拒 (Code: {result.get('code')}), "
+                    f"提示: {result.get('message')}"
+                )
+                if result.get("code") in [-352]:
+                    is_success = False
 
+    except Exception as e:
+        if isinstance(e, TimeoutError) and "超过 10 分钟" in str(e):
+            raise e
+        elif type(e).__name__ != "TimeoutError":
+            print(f"扫描房间 {room_id} 出错: {e}")
+
+    finally:
+        # 清理网络监听，防内存泄漏
+        page.remove_listener("response", handle_response)
+
+    return is_success
 
 def build_room_urls(room_ids):
     return [f"https://live.bilibili.com/{room_id}" for room_id in room_ids]
@@ -461,7 +510,6 @@ def main():
                 
     except Exception as e:
         error_msg = traceback.format_exc()
-        print(f"💥 程序发生致命崩溃，正在发送 Discord 通知...\n{error_msg}")
         send_crash_notification(error_msg)
         raise e
 
