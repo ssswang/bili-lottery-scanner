@@ -48,6 +48,11 @@ The script parses `config.txt` located in the root directory:
       <td><code>0</code></td>
     </tr>
     <tr>
+      <td><code>BEEP_SWITCH</code></td>
+      <td>Windows Beep sound toggle (<code>1</code> = Enabled, <code>0</code> = Disabled)</td>
+      <td><code>1</code></td>
+    </tr>
+    <tr>
       <td><code>DISCORD_WEBHOOK</code></td>
       <td>Discord Webhook URL for alert notifications</td>
       <td><code>"https://discord.com/api/webhooks/..."</code></td>
