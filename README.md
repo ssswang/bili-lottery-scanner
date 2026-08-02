@@ -93,24 +93,10 @@ The script parses `config.txt` located in the root directory:
 * Python 3.8 or higher.
 
 ### 2. One-Click Setup
-Run `install.bat` on Windows to automatically install dependencies, download the Playwright Chromium browser binary, and generate a default `config.txt` file.
+Run `install.bat` on Windows to automatically install dependencies, download the Playwright Chromium browser binary.
 
-### 3. Manual Installation
-1. Install Python package dependencies:
-   ```bash
-   pip install requests playwright
-   ```
-2. Install Playwright browser binaries:
-   ```bash
-   playwright install chromium
-   ```
-3. If you need discord notification, configure `config.txt` with `IM_SWITCH=1` AND your `DISCORD_WEBHOOK` URL.
-4. Launch the script or double click scan.bat:
-   ```bash
-   python scan.py
-   ```
+### 3. Generate the `config.txt` if you need
 
----
 
 ## 🛡️ Exception & Risk Control Handling
 
