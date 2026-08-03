@@ -1,5 +1,32 @@
 # Changelog
 
+## 2026-08-03
+**Compare**: [098a59b...d2062be](https://github.com/ssswang/bili-lottery-scanner/compare/098a59b2d844140088204934fae6e1f4cad618ab...d2062be524a9667f0e671594240727bea1e28801)
+### ✨ New
+- Added support for **blacklisting specific rooms** via `BLACKLIST_ROOM_IDS`.
+- Added detection of **VIP/Guard-only streams**, allowing them to be skipped automatically.
+- Added **viewer-count filtering** for Hot Rank rooms to prioritize streams with a higher chance of valuable lotteries.
+
+### 🚀 Improvements
+- Improved GeeTest detection reliability and timeout handling.
+- Changed browser initialization to start from the live homepage instead of a category page.
+- Added GeeTest verification checks during category scanning.
+- Improved lottery parsing:
+  - Participation requirements and draw times are now associated with the **highest-value lottery** instead of the last processed entry.
+  - Notification content is more accurate and consistent.
+- Enhanced logging and exception reporting for easier debugging and long-term stability.
+
+### ⚙️ Configuration Changes
+Added a new configuration option:
+
+- `BLACKLIST_ROOM_IDS`
+
+### 🐛 Fixes
+- Improved GeeTest detection reliability and timeout handling.
+- Fixed Code `-352` notification logic to ensure risk-control events are reported correctly.
+
+### ⚠️ Behavioral Changes
+- Increased the delay between scan cycles to **300 seconds (5 minutes)** to reduce request frequency and lower the likelihood of triggering anti-abuse mechanisms.
 ## 2026-08-02
 **Compare**: [2398ada...88afdd6](https://github.com/ssswang/bili-lottery-scanner/compare/2398adafba4ba4784201686e3fba10d7c6766a8c...88afdd6877db7a011b8cf0a31caddeea556bd1c4)
 
