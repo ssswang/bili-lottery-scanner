@@ -65,7 +65,6 @@ def get_list_config(config, key, default):
 
 
 CONFIG = load_external_config()
-CUSTOM_ROOM_IDS = get_list_config(CONFIG, "CUSTOM_ROOM_IDS", "[]")
 BLACKLIST_ROOM_IDS = get_list_config(CONFIG, "BLACKLIST_ROOM_IDS", "[]")
 CATEGORY_URLS = get_list_config(CONFIG, "CATEGORY_URLS", '["https://live.bilibili.com/p/eden/area-tags?areaId=0&parentAreaId=1", "https://live.bilibili.com/p/eden/area-tags?&areaId=190&parentAreaId=5"]')
 ROOM_COUNT = get_int_config(CONFIG, "ROOM_COUNT", 40)
@@ -74,7 +73,8 @@ DISCORD_WEBHOOK = CONFIG.get("DISCORD_WEBHOOK", "")
 RED_ALERT_AVG_THRESHOLD = get_int_config(CONFIG, "RED_ALERT_AVG_THRESHOLD", 3)
 PURPLE_ALERT_THRESHOLD = get_int_config(CONFIG, "PURPLE_ALERT_THRESHOLD", 9)
 BEEP_SWITCH = get_int_config(CONFIG, "BEEP_SWITCH", 1)
-
+PURPLE_SCAN_SWITCH= get_int_config(CONFIG, "PURPLE_SCAN_SWITCH", 1)
+RED_SCAN_SWITCH= get_int_config(CONFIG, "RED_SCAN_SWITCH", 1)
 def send_lottery_notification(
     username, room_id, gift_text, requirement_str, total_price, end_time_str
 ):
@@ -215,13 +215,49 @@ def wait_until_geetest_finished(page):
         elif type(e).__name__ != "TimeoutError":
             print(f"验证码检测流程出现异常: {e}")
 
+ 
+def detect_login(page):
+    """弹出登录框即判定为触发了 352 风控"""
+    selector = "div.login-scan-wp"
+    max_wait_seconds = 300  # 5 分钟超时限制
+    
+ 
+    if not page.locator(selector).count():
+        return False
+    else:
+        send_interaction_notification("🚨 触发 352 风控（弹出强制登录框），请登录")
+ 
+        alarmed = False
+        start_time = time.time()
+        try:
+            while page.locator(selector).count():
+                elapsed_time = time.time() - start_time
+                if elapsed_time > max_wait_seconds:
+                    send_interaction_notification(
+                        "❌ 验证码等待超时，程序退出。"
+                    )
+                    raise TimeoutError("验证码等待超时，超过 5 分钟未完成输入。")
+ 
+                if not alarmed:
+                    alarm()
+                    alarmed = True
+ 
+                page.wait_for_timeout(1000)
+            
+        except Exception as e:
+            if isinstance(e, TimeoutError) and "超过 5 分钟" in str(e):
+                raise e
+            elif type(e).__name__ != "TimeoutError":
+                print(f"验证码检测流程出现异常: {e}")  
+    return False
 
-def detect_login_window(page):
+    
+def detect_login_and_quite(page):
     """弹出登录框即判定为触发了 352 风控"""
     selector = "div.login-scan-wp"
     if page.locator(selector).count():
         alarm()
-        send_interaction_notification("🚨 触发 352 风控（弹出强制登录框），请更换 IP 或重启尝试至显示验证码")
+        send_interaction_notification("🚨 触发 352 风控（弹出强制登录框）")
         sys.exit("退出")
     return False
 
@@ -348,7 +384,7 @@ def calculate_anchor_lottery(page, anchor_data, room_id):
     new_datetime = now + timedelta(seconds=seconds_to_add)
     formatted_new_datetime = new_datetime.strftime("%Y-%m-%d %H:%M:%S")
 
-    if total_price > 1 and award_goaway_time > 20:
+    if total_price > PURPLE_ALERT_THRESHOLD and award_goaway_time > 20:
         print(f"🎉 发现天选抽奖！主播: {username} | 房间: {room_id} ")
         print(f" {gift_line}")
         print(f" 🔒 参与门槛: {require_text}")
@@ -455,10 +491,13 @@ def scan_room_by_intercept(page, room):
     if room_id in BLACKLIST_ROOM_IDS:
         return True
     target_url_keyword = "xlive/lottery-interface/v1/lottery/getLotteryInfoWeb"
-    packet_icon_selector = (
-        ".popularity-red-envelope-entry.gift-left-part, "
-        ".anchor-lottery-entry.gift-left-part"
-    )
+    selectors = []
+    if RED_SCAN_SWITCH:
+        selectors.append(".popularity-red-envelope-entry.gift-left-part")
+    if PURPLE_SCAN_SWITCH:
+        selectors.append(".anchor-lottery-entry.gift-left-part")
+
+    packet_icon_selector = ", ".join(selectors)
 
     captured_json = [None]
     is_success = True
@@ -479,9 +518,9 @@ def scan_room_by_intercept(page, room):
         # 2. 大航海
         if detect_vip_stream(page):
             return True
-        # 3. 弹出登录框即判定为 -352，直接返回 False
-        if detect_login_window(page):
-            return False
+        # 3. 弹出登录框
+        detect_login(page)
+
         heat = page.locator(".heat-index-scroll-item")
         if heat.count():
             heat.first.click()
@@ -503,16 +542,16 @@ def scan_room_by_intercept(page, room):
         # 6. 解析 JSON
         result = captured_json[0]
         if result:
-            code = result.get("code")  # 🎯 修复：正确提取 code
+            code = result.get("code")  
             if code == 0:
                 data = result.get("data", {})
 
                 red_packets = data.get("popularity_red_pocket")
-                if red_packets:
+                if RED_SCAN_SWITCH and red_packets:
                     calculate_red_packets(page, red_packets, room_id)
 
                 anchor_data = data.get("anchor")
-                if anchor_data:
+                if PURPLE_SCAN_SWITCH and anchor_data:
                     calculate_anchor_lottery(page, anchor_data, room_id)
             else:
                 print(f"⚠️ 房间 {room_id} 接口被拒, Code: {code}")
@@ -539,6 +578,8 @@ def build_room_urls(room_ids):
 
 
 def main():
+    if not RED_SCAN_SWITCH and not PURPLE_SCAN_SWITCH:
+        sys.exit("需要至少监控一种红包")
     try:
         with sync_playwright() as p:
             browser = p.chromium.launch(headless=False)
@@ -547,24 +588,17 @@ def main():
             while True:
                 print("\n--- 开始新一轮全自动监听检测 ---")
 
-                # 1. 扫描自选列表
-                custom_rooms = build_room_urls(CUSTOM_ROOM_IDS)
-                for room in custom_rooms:
-                    scan_room_by_intercept(page, room)
-
-
                 # 2. 扫描热门排行榜列表
                 hot_rooms = get_hot_rank_rooms()
                 for room in hot_rooms:
                     scan_room_by_intercept(page, room)
-
 
                 # 3. 扫描分区列表
                 for url in CATEGORY_URLS:
                     rooms = get_rooms(page, url)
                     for room in rooms:
                         scan_room_by_intercept(page, room)
-
+                        
                 idle = 300
                 print("一轮扫描结束...休息", idle)
                 time.sleep(idle) 
