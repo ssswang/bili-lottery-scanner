@@ -7,7 +7,6 @@ A monitoring and alert script for B Zhan live stream red packets and anchor lott
 ## ✨ Features
 
 * **Multi-Source Room Scanning**:
-  * **Custom Room List**: Prioritizes scanning user-defined room IDs (`CUSTOM_ROOM_IDS`).
   * **Hot Ranking List**: Automatically fetches and scans top live streams via the B Zhan Hot Rank API.
   * **Category Pages**: Scrolls through specified category pages (`CATEGORY_URLS`) to discover active live streams.
 * **Zero-Miss Network Response Interception**:
@@ -78,9 +77,14 @@ The script parses `config.txt` located in the root directory:
       <td><code>["https://live.bilibili.com/p/eden/area-tags?..."]</code></td>
     </tr>
     <tr>
-      <td><code>CUSTOM_ROOM_IDS</code></td>
-      <td>List of specific room IDs to scan first (JSON Array format)</td>
-      <td><code>[]</code></td>
+      <td><code>RED_SCAN_SWITCH</code></td>
+      <td>Switch for Scan 🧧</td>
+      <td><code>1</code></td>
+    </tr>
+      <tr>
+      <td><code>PURPLE_SCAN_SWITCH</code></td>
+      <td>Switch for Scan 🟪</td>
+      <td><code>1</code></td>
     </tr>
   </tbody>
 </table>
@@ -100,6 +104,5 @@ Run `install.bat` on Windows to automatically install dependencies, download the
 
 ## 🛡️ Exception & Risk Control Handling
 
-* **GeeTest Captchas**: When `div.geetest_panel` appears in Liver's room, the script sounds a beep alarm and loops until you manually pass the verification.
-* **Rate Limits**: If B Zhan triggers risk control code `-352` which is unlikely , the scanner will log the warning and halt the current category scan pass.
+* **GeeTest Captchas and Login**: When GeeTest panel or login panel appears in Liver's room, the script sounds a beep alarm and loops until you manually pass the verification.
 * **Fatal Crashes**: Any top-level unhandled exception triggers `send_crash_notification` to forward the error log directly to Discord.
