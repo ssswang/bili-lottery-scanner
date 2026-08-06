@@ -106,7 +106,7 @@ def send_lottery_notification(
                         "inline": True,
                     },
                     {
-                        "name": "💰 总价值",
+                        "name": "💰 最大包价值",
                         "value": f"**{total_price}** 电池",
                         "inline": True,
                     },
@@ -132,8 +132,7 @@ def send_crash_notification(error_msg):
                 "title": "🚨 脚本警报！",
                 "color": 16711680,  # 红色警告 (#FF0000)
                 "description": (
-                    "监控脚本已停止运行，请及时检查服务器或本地环境。\n\n**错误堆栈信息:**\n```python\n"
-                    f"{error_msg[-1800:]}\n```"
+                    "监控脚本已停止运行，请及时检查服务器或本地环境。"
                 ),
                 "footer": {
                     "text": (
