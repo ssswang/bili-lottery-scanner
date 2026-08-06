@@ -111,7 +111,7 @@ def send_lottery_notification(
                         "inline": True,
                     },
                     {
-                        "name": "🕒 开奖时间/倒计时",
+                        "name": "🕒 开奖时间",
                         "value": f"{end_time_str}",
                         "inline": False,
                     },
@@ -186,7 +186,7 @@ def wait_until_geetest_finished(page):
     max_wait_seconds = 300  # 5 分钟超时限制
 
     try:
-        page.locator(selector).first.wait_for(state="attached", timeout=7000)
+        page.locator(selector).first.wait_for(state="attached", timeout=4000)
         send_interaction_notification("🚨 检测到验证码，请输入...")
 
         alarmed = False
@@ -271,6 +271,16 @@ def detect_vip_stream(page):
 def create_context(browser):
     print("正在拉起浏览器..")
     context = browser.new_context()
+
+    def block_media(route):
+        request = route.request
+        if request.resource_type == "media" or ".m4s" in request.url.lower():
+            route.abort()
+        else:
+            route.continue_()
+
+    # 不下载直播音视频流及 m4s 分片，保留页面和抽奖接口请求以加快房间扫描。
+    context.route("**/*", block_media)
     page = context.new_page()
 
     target_trigger_url = "https://live.bilibili.com"
@@ -351,7 +361,7 @@ def get_room_username(page):
     """获取房间的主播用户名"""
     try:
         owner_element = page.locator(".room-owner-username")
-        owner_element.wait_for(state="attached", timeout=2000)
+        owner_element.wait_for(state="attached", timeout=500)
         return (owner_element.text_content()).strip()
     except:
         return "未知主播"
@@ -490,14 +500,6 @@ def scan_room_by_intercept(page, room):
     if room_id in BLACKLIST_ROOM_IDS:
         return True
     target_url_keyword = "xlive/lottery-interface/v1/lottery/getLotteryInfoWeb"
-    selectors = []
-    if RED_SCAN_SWITCH:
-        selectors.append(".popularity-red-envelope-entry.gift-left-part")
-    if PURPLE_SCAN_SWITCH:
-        selectors.append(".anchor-lottery-entry.gift-left-part")
-
-    packet_icon_selector = ", ".join(selectors)
-
     captured_json = [None]
     is_success = True
 
@@ -508,63 +510,75 @@ def scan_room_by_intercept(page, room):
             except Exception:
                 pass
 
+    def wait_for_lottery_response():
+        for _ in range(4):
+            if captured_json[0] is not None:
+                break
+            page.wait_for_timeout(2000)
+
+        result = captured_json[0]
+        if not isinstance(result, dict):
+            print(f"⚠️ 房间 {room_id} 未收到有效的抽奖接口 JSON 响应")
+            return None
+        return result
+
     page.on("response", handle_response)
 
     try:
         page.goto(room)
-        # 1. 验证码
-        wait_until_geetest_finished(page)
-        # 2. 大航海
+
+        # 1. 先等待并判断抽奖接口响应，避免正常房间触发验证码/登录检测。
+        # 未收到抽奖接口响应，直接扫描下一个房间。
+        result = wait_for_lottery_response()
+        if result is None:
+            return True
+
+        code = result.get("code")
+        # 2. 仅当接口非正常返回时，才检查验证码和登录状态。
+        if code != 0:
+            print(f"⚠️ 房间 {room_id} 接口被拒, Code: {code}")
+            wait_until_geetest_finished(page)
+            detect_login(page)
+
+            # 验证/登录完成后重新进入房间，再读取最新的抽奖接口响应。
+            captured_json[0] = None
+            page.reload()
+            result = wait_for_lottery_response()
+            if result is None:
+                return True
+
+            code = result.get("code")
+            if code == 0:
+                print(f"✅ 房间 {room_id} 验证/登录后已重新获取抽奖信息")
+            else:
+                print(f"⚠️ 房间 {room_id} 验证/登录后接口仍被拒, Code: {code}")
+            if code == -352:
+                send_interaction_notification(
+                    f"🚨 房间 {room_id} 触发 -352 频繁限制！"
+                )
+                is_success = False
+            if code != 0:
+                print(code)
+                return is_success
+
         if detect_vip_stream(page):
             return True
-        # 3. 弹出登录框
-        detect_login(page)
 
-        heat = page.locator(".heat-index-scroll-item")
-        if heat.count():
-            heat.first.click()
-        page.mouse.wheel(0, 9)
-        # 4. UI 图标判断：先等 1.5 秒看看页面有没有红包/天选图标
-        packet_btn = page.locator(packet_icon_selector)
-        try:
-            packet_btn.first.wait_for(state="attached", timeout=1500)
-        except Exception:
-            # 没图标说明是空房间，直接返回 True 快速扫下一个
-            return True
+        # 3. 接口正常时再解析抽奖数据。
+        data = result.get("data", {})
+        red_packets = data.get("popularity_red_pocket")
+        if RED_SCAN_SWITCH and red_packets:
+            calculate_red_packets(page, red_packets, room_id)
 
-        # 5. 确认有图标后，轮询最多 2 秒等待 JSON 结果返回
-        for _ in range(4):
-            if captured_json[0] is not None:
-                break
-            page.wait_for_timeout(500)
-
-        # 6. 解析 JSON
-        result = captured_json[0]
-        if result:
-            code = result.get("code")  
-            if code == 0:
-                data = result.get("data", {})
-
-                red_packets = data.get("popularity_red_pocket")
-                if RED_SCAN_SWITCH and red_packets:
-                    calculate_red_packets(page, red_packets, room_id)
-
-                anchor_data = data.get("anchor")
-                if PURPLE_SCAN_SWITCH and anchor_data:
-                    calculate_anchor_lottery(page, anchor_data, room_id)
-            else:
-                print(f"⚠️ 房间 {room_id} 接口被拒, Code: {code}")
-                if code in [-352]:
-                    send_interaction_notification(
-                        f"🚨 房间 {room_id} 触发 -352 频繁限制！"
-                    )
-                    is_success = False
+        anchor_data = data.get("anchor")
+        if PURPLE_SCAN_SWITCH and anchor_data:
+            calculate_anchor_lottery(page, anchor_data, room_id)
 
     except Exception as e:
         if isinstance(e, TimeoutError) and "超过 5 分钟" in str(e):
             raise e
         elif type(e).__name__ != "TimeoutError":
-            print(f"扫描房间 {room_id} 出错: {e}")
+            print(f"扫描房间 {room_id} 出错:",  str(e))
 
     finally:
         page.remove_listener("response", handle_response)
@@ -576,6 +590,48 @@ def build_room_urls(room_ids):
     return [f"https://live.bilibili.com/{room_id}" for room_id in room_ids]
 
 
+def scan_hot_rank(page, stop_at=None):
+    """Scan the hot-rank room list once."""
+    if stop_at and datetime.now() >= stop_at:
+        return
+
+    print(f"[{datetime.now().strftime('%Y-%m-%d %H:%M:%S')}] 开始扫描热门榜")
+    try:
+        hot_rooms = get_hot_rank_rooms()
+        for room in hot_rooms:
+            if stop_at and datetime.now() >= stop_at:
+                return
+            scan_room_by_intercept(page, room)
+    finally:
+        print(f"[{datetime.now().strftime('%Y-%m-%d %H:%M:%S')}] 结束扫描热门榜")
+
+
+def scan_categories(page, stop_at=None):
+    """Scan every configured category. """
+    for round_number in range(1, 2):
+        if stop_at and datetime.now() >= stop_at:
+            return
+        print(f"[{datetime.now().strftime('%Y-%m-%d %H:%M:%S')}] 开始扫描分区")
+        try:
+            for url in CATEGORY_URLS:
+                if stop_at and datetime.now() >= stop_at:
+                    return
+                rooms = get_rooms(page, url)
+                for room in rooms:
+                    if stop_at and datetime.now() >= stop_at:
+                        return
+                    scan_room_by_intercept(page, room)
+        finally:
+            print(f"[{datetime.now().strftime('%Y-%m-%d %H:%M:%S')}] 结束扫描分区")
+
+
+def wait_until(target_time):
+    seconds = max(0, (target_time - datetime.now()).total_seconds())
+    if seconds:
+        print(f"等待至 {target_time.strftime('%Y-%m-%d %H:%M:%S')}")
+        time.sleep(seconds)
+
+
 def main():
     if not RED_SCAN_SWITCH and not PURPLE_SCAN_SWITCH:
         sys.exit("需要至少监控一种红包")
@@ -584,23 +640,35 @@ def main():
             browser = p.chromium.launch(headless=False)
             context, page = create_context(browser)
             page.mouse.wheel(0, 400)
+
+            # 脚本在 :00 至 :39 启动时，先立即补跑热门榜。
+            startup_time = datetime.now()
+            if startup_time.minute < 40:
+                startup_stop_at = startup_time.replace(
+                    minute=30 if startup_time.minute < 30 else 40,
+                    second=0,
+                    microsecond=0,
+                )
+                print("脚本启动，立即扫描热门排行榜")
+                scan_hot_rank(page, startup_stop_at)
+
             while True:
-                print("\n--- 开始新一轮全自动监听检测 ---")
+                now = datetime.now()
 
-                # 2. 扫描热门排行榜列表
-                hot_rooms = get_hot_rank_rooms()
-                for room in hot_rooms:
-                    scan_room_by_intercept(page, room)
-
-                # 3. 扫描分区列表
-                for url in CATEGORY_URLS:
-                    rooms = get_rooms(page, url)
-                    for room in rooms:
-                        scan_room_by_intercept(page, room)
-                        
-                idle = 300
-                print("一轮扫描结束...休息", idle)
-                time.sleep(idle) 
+                if 1 <= now.minute < 30:
+                    stop_at = now.replace(minute=30, second=0, microsecond=0)
+                    print("\n--- 热门排行榜扫描窗口 ---")
+                    scan_hot_rank(page, stop_at)
+                elif now.minute >= 40:
+                    stop_at = (now + timedelta(hours=1)).replace(
+                        minute=0, second=0, microsecond=0
+                    )
+                    print("\n--- 分区列表扫描窗口 ---")
+                    scan_categories(page, stop_at)
+                elif now.minute == 0:
+                    wait_until(now.replace(minute=1, second=0, microsecond=0))
+                else:
+                    wait_until(now.replace(minute=40, second=0, microsecond=0))
 
     except Exception as e:
         error_msg = traceback.format_exc()

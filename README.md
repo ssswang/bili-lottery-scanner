@@ -12,7 +12,15 @@ A monitoring and alert script for B Zhan live stream red packets and anchor lott
 * **Zero-Miss Network Response Interception**:
   * Powered by Playwright Chromium automation.
   * Registers network listeners **before** navigating to room pages (`page.goto`), ensuring capture of `getLotteryInfoWeb` API data.
-  * Validates red envelope / anchor lottery UI icons before processing data to maintain ultra-fast scanning speeds.
+  * Checks the `getLotteryInfoWeb` response first. Normal (`code == 0`) responses are parsed immediately; non-zero responses trigger GeeTest/login checks, then reload the room and request the lottery data again.
+* **Low-Bandwidth Room Loading**:
+  * Blocks Playwright `media` requests and `.m4s` stream segments, so live audio/video is not downloaded while lottery API requests remain available.
+* **Scheduled Scan Windows**:
+  * Hot Rank scans repeat from `:01` through `:29:59` of every hour.
+  * Category scans repeat from `:40` through `:59:59` of every hour.
+  * The script waits during `:30` through `:39:59`, and from `:00` to `:00:59` before the next Hot Rank window.
+  * If started during `:00` through `:39`, it immediately performs one Hot Rank scan before following the regular schedule.
+  * Start and finish timestamps are printed for each Hot Rank and Category scan.
 * **Advanced Lottery & Red Packet Filters**:
   * **Anchor Lotteries**: Filters out high-threshold requirements and low-time remaining draws.
   * **Red Packets**: Calculates average battery value per award item to ensure only high-yield packets trigger notifications.
@@ -25,6 +33,19 @@ A monitoring and alert script for B Zhan live stream red packets and anchor lott
   * **Interaction Alert**: Sends warnings for captcha prompts or API rate limit responses.
 * **External Configuration Support**:
   * Automatically reads key-value configurations from `config.txt` at launch.
+
+---
+
+## 🕒 Scan Schedule
+
+| Time in each hour | Action |
+| --- | --- |
+| `:00–:00:59` | Wait for the Hot Rank window (unless this is a fresh startup, which performs one Hot Rank scan). |
+| `:01–:29:59` | Repeatedly scan the Hot Rank list. |
+| `:30–:39:59` | Pause scanning. |
+| `:40–:59:59` | Repeatedly scan configured category pages. |
+
+Each individual scan checks the current window boundary before starting the next room, so it stops promptly when the allotted period ends.
 
 ---
 
