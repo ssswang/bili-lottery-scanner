@@ -1,8 +1,5 @@
 # -*- coding: utf-8 -*-
-# ==============================================================================
-# 项目名称: B站直播红包&天选抽奖检测脚本，最好有VPN搭配使用
-# 联合作者: Gemini & 我
-# ==============================================================================
+# 共享扫描逻辑。
 import json
 import os
 import re
@@ -19,7 +16,7 @@ from playwright.sync_api import sync_playwright
 
 
 def load_external_config():
-    """Load KEY=VALUE entries from config.txt"""
+    """读取 config.txt 中的键值配置。"""
     config_dir = os.path.dirname(os.path.abspath(__file__))
     filename = "config.txt"
     config_path = os.path.join(config_dir, filename)
@@ -78,7 +75,7 @@ RED_SCAN_SWITCH= get_int_config(CONFIG, "RED_SCAN_SWITCH", 1)
 def send_lottery_notification(
     username, room_id, gift_text, requirement_str, total_price, end_time_str
 ):
-    """装配discord通知"""
+    """发送抽奖通知。"""
     payload = {
         "embeds": [
             {
@@ -124,7 +121,7 @@ def send_lottery_notification(
 
 
 def send_crash_notification(error_msg):
-    """程序崩溃 alert"""
+    """发送程序崩溃通知。"""
     print(f"💥 程序发生崩溃，正在发送 Discord 通知...\n{error_msg}")
     payload = {
         "embeds": [
@@ -146,7 +143,7 @@ def send_crash_notification(error_msg):
 
 
 def send_interaction_notification(msg):
-    """提示需要交互的信息"""
+    """发送需要人工处理的通知。"""
     print(msg)
     payload = {
         "embeds": [
@@ -216,7 +213,7 @@ def wait_until_geetest_finished(page):
 
  
 def detect_login(page):
-    """弹出登录框即判定为触发了 352 风控"""
+    """检测登录框，并等待人工完成登录。"""
     selector = "div.login-scan-wp"
     max_wait_seconds = 300  # 5 分钟超时限制
     
@@ -252,7 +249,7 @@ def detect_login(page):
 
     
 def detect_login_and_quite(page):
-    """弹出登录框即判定为触发了 352 风控"""
+    """检测登录框后立即终止脚本。"""
     selector = "div.login-scan-wp"
     if page.locator(selector).count():
         alarm()
@@ -261,7 +258,7 @@ def detect_login_and_quite(page):
     return False
 
 def detect_vip_stream(page):
-    """判定大航海直播"""
+    """判断当前房间是否为大航海直播。"""
     selector = "div.live-charge-panel"
     if page.locator(selector).count():
         return True
@@ -279,7 +276,7 @@ def create_context(browser):
         else:
             route.continue_()
 
-    # 不下载直播音视频流及 m4s 分片，保留页面和抽奖接口请求以加快房间扫描。
+    # 拦截直播音视频流与 M4S 分片，保留页面和抽奖接口请求。
     context.route("**/*", block_media)
     page = context.new_page()
 
@@ -304,7 +301,7 @@ def alarm():
 
 
 def get_hot_rank_rooms():
-    """获取热门排行榜接口数据"""
+    """获取热门榜房间列表。"""
     api_url = "https://api.live.bilibili.com/xlive/web-interface/v1/index/getHotRankList?web_location=444.7"
     rooms = []
 
@@ -358,7 +355,7 @@ def get_rooms(page, url):
 
 
 def get_room_username(page):
-    """获取房间的主播用户名"""
+    """获取房间主播名称。"""
     try:
         owner_element = page.locator(".room-owner-username")
         owner_element.wait_for(state="attached", timeout=500)
@@ -368,7 +365,7 @@ def get_room_username(page):
 
 
 def calculate_anchor_lottery(page, anchor_data, room_id):
-    """解析 json 里的 anchor (天选抽奖) 字段"""
+    """解析天选抽奖数据。"""
     if not anchor_data:
         return
 
@@ -415,7 +412,7 @@ def calculate_anchor_lottery(page, anchor_data, room_id):
 
 
 def calculate_red_packets(page, red_packets, room_id):
-    """解析接口返回的红包 JSON 数据"""
+    """解析接口返回的红包数据。"""
     username = get_room_username(page)
 
     gifts_text = ""
@@ -466,8 +463,7 @@ def calculate_red_packets(page, red_packets, room_id):
         else:
             current_packet_avg = 0.0
 
-        # 门槛/开奖时间跟随触发报警的那个指标（包均价）联动，
-        # 而不是简单取循环里最后一个红包的数据
+        # 参与门槛和开奖时间以包均价最高的红包为准。
         if current_packet_avg >= max_avg:
             max_avg = current_packet_avg
             requirement_str = current_requirement_str
@@ -527,29 +523,30 @@ def scan_room_by_intercept(page, room):
     try:
         page.goto(room)
 
-        # 1. 先等待并判断抽奖接口响应，避免正常房间触发验证码/登录检测。
-        # 未收到抽奖接口响应，直接扫描下一个房间。
+        # 等待并判断抽奖接口响应。
         result = wait_for_lottery_response()
-        if result is None:
-            return True
-
-        code = result.get("code")
-        # 2. 仅当接口非正常返回时，才检查验证码和登录状态。
+        code = result.get("code") if result is not None else None
+        # 非正常响应或未拦截到响应时，检查验证码和登录状态。
         if code != 0:
-            print(f"⚠️ 房间 {room_id} 接口被拒, Code: {code}")
+            if result is None:
+                print(
+                    f"⚠️ 房间 {room_id} 未拦截到抽奖接口响应，"
+                    "按 Code 非 0 处理"
+                )
+            else:
+                print(f"⚠️ 房间 {room_id} 接口被拒, Code: {code}")
             wait_until_geetest_finished(page)
             detect_login(page)
 
-            # 验证/登录完成后重新进入房间，再读取最新的抽奖接口响应。
+            # 验证或登录完成后重新加载房间并读取最新响应。
             captured_json[0] = None
             page.reload()
             result = wait_for_lottery_response()
-            if result is None:
-                return True
-
-            code = result.get("code")
+            code = result.get("code") if result is not None else None
             if code == 0:
                 print(f"✅ 房间 {room_id} 验证/登录后已重新获取抽奖信息")
+            elif result is None:
+                print(f"⚠️ 房间 {room_id} 验证/登录后仍未拦截到抽奖接口响应")
             else:
                 print(f"⚠️ 房间 {room_id} 验证/登录后接口仍被拒, Code: {code}")
             if code == -352:
@@ -564,7 +561,7 @@ def scan_room_by_intercept(page, room):
         if detect_vip_stream(page):
             return True
 
-        # 3. 接口正常时再解析抽奖数据。
+        # 接口正常时解析抽奖数据。
         data = result.get("data", {})
         red_packets = data.get("popularity_red_pocket")
         if RED_SCAN_SWITCH and red_packets:
@@ -591,7 +588,7 @@ def build_room_urls(room_ids):
 
 
 def scan_hot_rank(page, stop_at=None, room_list=None):
-    """Scan the hot-rank room list once."""
+    """扫描一轮热门榜房间。"""
     if stop_at and datetime.now() >= stop_at:
         return
 
@@ -608,7 +605,7 @@ def scan_hot_rank(page, stop_at=None, room_list=None):
 
 
 def scan_categories(page, stop_at=None):
-    """Scan every configured category. """
+    """扫描一轮已配置的分区。"""
     for round_number in range(1, 2):
         if stop_at and datetime.now() >= stop_at:
             return
@@ -634,58 +631,7 @@ def wait_until(target_time):
 
 
 def main():
-    if not RED_SCAN_SWITCH and not PURPLE_SCAN_SWITCH:
-        sys.exit("需要至少监控一种红包")
-    try:
-        with sync_playwright() as p:
-            browser = p.chromium.launch(headless=False)
-            context, page = create_context(browser)
-            page.mouse.wheel(0, 400)
-
-            locked_hot_rooms = None
-            while True:
-                now = datetime.now()
-                locked_scan_start = now.replace(
-                    minute=0, second=59, microsecond=0
-                )
-                category_scan_start = now.replace(
-                    minute=30, second=0, microsecond=0
-                )
-                snapshot_time = now.replace(
-                    minute=59, second=45, microsecond=0
-                )
-
-                # :59:45 只获取并保存一份热门榜，供下一小时的锁定扫描使用。
-                if now >= snapshot_time:
-                    print(
-                        f"[{now.strftime('%Y-%m-%d %H:%M:%S')}] "
-                        "获取并锁定下一小时的热门榜"
-                    )
-                    locked_hot_rooms = get_hot_rank_rooms()
-                    next_locked_scan_start = (
-                        now + timedelta(hours=1)
-                    ).replace(minute=0, second=59, microsecond=0)
-                    wait_until(next_locked_scan_start)
-                elif now < locked_scan_start:
-                    if locked_hot_rooms is None:
-                        print("脚本中途启动，获取一份备用锁定热门榜")
-                        locked_hot_rooms = get_hot_rank_rooms()
-                    wait_until(locked_scan_start)
-                elif now < category_scan_start:
-                    if locked_hot_rooms is None:
-                        print("未找到锁定热门榜，获取一份备用列表")
-                        locked_hot_rooms = get_hot_rank_rooms()
-                    scan_hot_rank(page, category_scan_start, locked_hot_rooms)
-                else:
-                    # :30 至 :59:44 每轮重新获取热门榜，再扫描分区。
-                    scan_hot_rank(page, snapshot_time)
-                    if datetime.now() < snapshot_time:
-                        scan_categories(page, snapshot_time)
-
-    except Exception as e:
-        error_msg = traceback.format_exc()
-        send_crash_notification(error_msg)
-        raise e
+    print("请运行 scan_hot_rank.py 或 scan_categories.py。")
 
 
 if __name__ == "__main__":

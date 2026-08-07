@@ -1,4 +1,4 @@
 @echo off
 cd /d "%~dp0"
-python scan.py
+echo Please run scan_hot_rank.bat or scan_categories.bat.
 pause
