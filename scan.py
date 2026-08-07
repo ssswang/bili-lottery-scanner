@@ -590,20 +590,21 @@ def build_room_urls(room_ids):
     return [f"https://live.bilibili.com/{room_id}" for room_id in room_ids]
 
 
-def scan_hot_rank(page, stop_at=None):
+def scan_hot_rank(page, stop_at=None, room_list=None):
     """Scan the hot-rank room list once."""
     if stop_at and datetime.now() >= stop_at:
         return
 
-    print(f"[{datetime.now().strftime('%Y-%m-%d %H:%M:%S')}] 开始扫描热门榜")
+    scan_name = "锁定热门榜" if room_list is not None else "热门榜"
+    print(f"[{datetime.now().strftime('%Y-%m-%d %H:%M:%S')}] 开始扫描{scan_name}")
     try:
-        hot_rooms = get_hot_rank_rooms()
+        hot_rooms = room_list if room_list is not None else get_hot_rank_rooms()
         for room in hot_rooms:
             if stop_at and datetime.now() >= stop_at:
                 return
             scan_room_by_intercept(page, room)
     finally:
-        print(f"[{datetime.now().strftime('%Y-%m-%d %H:%M:%S')}] 结束扫描热门榜")
+        print(f"[{datetime.now().strftime('%Y-%m-%d %H:%M:%S')}] 结束扫描{scan_name}")
 
 
 def scan_categories(page, stop_at=None):
@@ -641,34 +642,45 @@ def main():
             context, page = create_context(browser)
             page.mouse.wheel(0, 400)
 
-            # 脚本在 :00 至 :39 启动时，先立即补跑热门榜。
-            startup_time = datetime.now()
-            if startup_time.minute < 40:
-                startup_stop_at = startup_time.replace(
-                    minute=30 if startup_time.minute < 30 else 40,
-                    second=0,
-                    microsecond=0,
-                )
-                print("脚本启动，立即扫描热门排行榜")
-                scan_hot_rank(page, startup_stop_at)
-
+            locked_hot_rooms = None
             while True:
                 now = datetime.now()
+                locked_scan_start = now.replace(
+                    minute=0, second=59, microsecond=0
+                )
+                category_scan_start = now.replace(
+                    minute=30, second=0, microsecond=0
+                )
+                snapshot_time = now.replace(
+                    minute=59, second=45, microsecond=0
+                )
 
-                if 1 <= now.minute < 30:
-                    stop_at = now.replace(minute=30, second=0, microsecond=0)
-                    print("\n--- 热门排行榜扫描窗口 ---")
-                    scan_hot_rank(page, stop_at)
-                elif now.minute >= 40:
-                    stop_at = (now + timedelta(hours=1)).replace(
-                        minute=0, second=0, microsecond=0
+                # :59:45 只获取并保存一份热门榜，供下一小时的锁定扫描使用。
+                if now >= snapshot_time:
+                    print(
+                        f"[{now.strftime('%Y-%m-%d %H:%M:%S')}] "
+                        "获取并锁定下一小时的热门榜"
                     )
-                    print("\n--- 分区列表扫描窗口 ---")
-                    scan_categories(page, stop_at)
-                elif now.minute == 0:
-                    wait_until(now.replace(minute=1, second=0, microsecond=0))
+                    locked_hot_rooms = get_hot_rank_rooms()
+                    next_locked_scan_start = (
+                        now + timedelta(hours=1)
+                    ).replace(minute=0, second=59, microsecond=0)
+                    wait_until(next_locked_scan_start)
+                elif now < locked_scan_start:
+                    if locked_hot_rooms is None:
+                        print("脚本中途启动，获取一份备用锁定热门榜")
+                        locked_hot_rooms = get_hot_rank_rooms()
+                    wait_until(locked_scan_start)
+                elif now < category_scan_start:
+                    if locked_hot_rooms is None:
+                        print("未找到锁定热门榜，获取一份备用列表")
+                        locked_hot_rooms = get_hot_rank_rooms()
+                    scan_hot_rank(page, category_scan_start, locked_hot_rooms)
                 else:
-                    wait_until(now.replace(minute=40, second=0, microsecond=0))
+                    # :30 至 :59:44 每轮重新获取热门榜，再扫描分区。
+                    scan_hot_rank(page, snapshot_time)
+                    if datetime.now() < snapshot_time:
+                        scan_categories(page, snapshot_time)
 
     except Exception as e:
         error_msg = traceback.format_exc()

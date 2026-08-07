@@ -16,10 +16,10 @@ A monitoring and alert script for B Zhan live stream red packets and anchor lott
 * **Low-Bandwidth Room Loading**:
   * Blocks Playwright `media` requests and `.m4s` stream segments, so live audio/video is not downloaded while lottery API requests remain available.
 * **Scheduled Scan Windows**:
-  * Hot Rank scans repeat from `:01` through `:29:59` of every hour.
-  * Category scans repeat from `:40` through `:59:59` of every hour.
-  * The script waits during `:30` through `:39:59`, and from `:00` to `:00:59` before the next Hot Rank window.
-  * If started during `:00` through `:39`, it immediately performs one Hot Rank scan before following the regular schedule.
+  * At `:59:45`, the script fetches and locks one Hot Rank list for the following hour.
+  * From `:00:30` through `:29:59`, it repeatedly scans that locked list without fetching it again.
+  * From `:30:00` through `:59:44`, it repeatedly fetches and scans the current Hot Rank list, then scans the configured category pages.
+  * If the script starts during the locked-list period without a saved list, it fetches one fallback list for that period.
   * Start and finish timestamps are printed for each Hot Rank and Category scan.
 * **Advanced Lottery & Red Packet Filters**:
   * **Anchor Lotteries**: Filters out high-threshold requirements and low-time remaining draws.
@@ -38,14 +38,18 @@ A monitoring and alert script for B Zhan live stream red packets and anchor lott
 
 ## 🕒 Scan Schedule
 
+The scheduler uses a saved Hot Rank snapshot for the first half-hour of each new hour, then switches back to live Hot Rank retrieval.
+
 | Time in each hour | Action |
 | --- | --- |
-| `:00–:00:59` | Wait for the Hot Rank window (unless this is a fresh startup, which performs one Hot Rank scan). |
-| `:01–:29:59` | Repeatedly scan the Hot Rank list. |
-| `:30–:39:59` | Pause scanning. |
-| `:40–:59:59` | Repeatedly scan configured category pages. |
+| `:59:45` | Fetch and save one Hot Rank list for the following hour. |
+| `:59:45–next hour :00:59` | Wait; no room scanning is started during this interval. |
+| `:00:59–:29:59` | Repeatedly scan the saved Hot Rank list. |
+| `:30:00–:59:44` | Fetch and scan the current Hot Rank list, then scan category pages. |
 
 Each individual scan checks the current window boundary before starting the next room, so it stops promptly when the allotted period ends.
+
+If the script starts during `:00:59–:29:59` without a saved snapshot, it creates a fallback snapshot and uses it until `:30:00`.
 
 ---
 
