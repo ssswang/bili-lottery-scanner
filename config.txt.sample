@@ -1,0 +1,19 @@
+# Lottery API scanner configuration
+
+# Maximum eligible Hot Rank rooms scanned per list refresh.
+HOT_RANK_LIMIT=80
+
+# Minimum accepted value is 2 seconds. Keep this conservative to reduce -352 risk.
+ROOM_INTERVAL_SECONDS=5
+
+# Wait after -352 or an authorization failure, in seconds.
+RISK_BACKOFF_SECONDS=900
+
+# Alert thresholds
+RED_ALERT_AVG_THRESHOLD=3
+PURPLE_ALERT_THRESHOLD=9
+BEEP_ENABLED=1
+
+# Discord notifications: 1 = enabled, 0 = console output only.
+DISCORD_ENABLED=0
+DISCORD_WEBHOOK="https://discord.com/api/webhooks/..."

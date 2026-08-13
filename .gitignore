@@ -1,0 +1,7 @@
+config.txt
+/__pycache__
+session_state.json
+lotteryapi_session.json
+qr_login.png
+direct_lottery_login_qr.png
+direct_lottery_session.json

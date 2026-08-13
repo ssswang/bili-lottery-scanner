@@ -1,0 +1,153 @@
+# B Zhan Live Lottery Scanner
+
+A monitoring and alert tool for B Zhan live stream red packets and anchor lotteries, built with Python and Playwright. It now has two independent scripts: one for Hot Rank rooms and one for configured category pages. Both intercept network API responses to analyze reward value and entry requirements, sending real-time Discord notifications for high-value rewards and alerting on crashes.
+
+---
+
+## ✨ Features
+
+* **Independent Scan Scripts**:
+  * **`scan_hot_rank.py`**: Scans only Hot Rank rooms.
+  * **`scan_categories.py`**: Continuously scans only rooms discovered from `CATEGORY_URLS`.
+  * **`scan_top3.py`**: At `:00:05` every hour, temporarily launches a headless browser to read and report the web Hot Rank Top 3.
+* **Network Response Interception**:
+  * Powered by Playwright Chromium automation.
+  * Registers network listeners **before** navigating to room pages (`page.goto`), ensuring capture of `getLotteryInfoWeb` API data.
+  * Checks the `getLotteryInfoWeb` response first. Normal (`code == 0`) responses are parsed immediately; non-zero or missing responses trigger GeeTest/login checks, then reload the room and request the lottery data again.
+* **Low-Bandwidth Room Loading**:
+  * Blocks Playwright `media` requests and `.m4s` stream segments, so live audio/video is not downloaded while lottery API requests remain available.
+* **Scheduled Scan Windows**:
+  * Hot Rank and Category scans run in separate processes and can run at the same time.
+  * The Hot Rank script continuously scans the first 80 rooms from the Hot Rank API, checking one room at a time.
+  * `scan_top3.py` reads the first three entries from the web Hot Rank page at `:00:05` every hour, prints each anchor's profile ID and name, and sends the same result to Discord when `IM_SWITCH=1`.
+  * The Category script has no schedule and continuously repeats category scans.
+  * Start and finish timestamps are printed for each Hot Rank and Category scan.
+* **Advanced Lottery & Red Packet Filters**:
+  * **Anchor Lotteries**: Filters out high-threshold requirements and low-time remaining draws.
+  * **Red Packets**: Calculates average battery value per award item to ensure only high-yield packets trigger notifications.
+* **GeeTest Captcha Detection & Audio Alarm**:
+  * Triggers a system beep (`winsound`) when a GeeTest captcha panel appears on screen.
+  * Pauses execution until manually solved, with a **5-minute timeout limit** to prevent infinite hanging.
+* **Discord Webhook Alerts**:
+  * **Lottery & Red Packet Alerts**: Sends formatted embed notifications for lotteries that meet specified thresholds.
+  * **Crash Alert**: Automatically catches unhandled runtime exceptions and posts the stack trace to Discord.
+  * **Interaction Alert**: Sends warnings for captcha prompts or API rate limit responses.
+  * Notifications are implemented in `discord_notifier.py` and are sent only when `IM_SWITCH=1`.
+* **External Configuration Support**:
+  * `config.py` independently reads and parses key-value configurations from `config.txt` at launch.
+
+---
+
+## 🕒 Separate Script Schedules
+
+### `scan_hot_rank.py`
+
+| Time in each hour | Action |
+| --- | --- |
+| All times | Continuously fetch and scan the first 80 rooms from the Hot Rank API, one room at a time. |
+
+### `scan_top3.py`
+
+| Time in each hour | Action |
+| --- | --- |
+| Every `:00:05` | Read and report the first three entries from the web Hot Rank page. |
+
+### `scan_categories.py`
+
+Starts immediately and repeatedly scans the configured category pages. It does not wait for a scheduled time window.
+
+The web Top 3 result contains each entry's profile ID and anchor name. Discord delivery follows the `IM_SWITCH=1` setting.
+
+---
+
+## ⚙️ Configuration (`config.txt`)
+
+The script parses `config.txt` located in the root directory:
+
+<table>
+  <thead>
+    <tr>
+      <th>Key</th>
+      <th>Description</th>
+      <th>Default / Example</th>
+    </tr>
+  </thead>
+  <tbody>
+     <tr>
+      <td><code>IM_SWITCH</code></td>
+      <td>Push Discord notification toggle (<code>1</code> = Enabled, <code>0</code> = Disabled)</td>
+      <td><code>0</code></td>
+    </tr>
+    <tr>
+      <td><code>BEEP_SWITCH</code></td>
+      <td>Windows Beep sound toggle (<code>1</code> = Enabled, <code>0</code> = Disabled)</td>
+      <td><code>1</code></td>
+    </tr>
+    <tr>
+      <td><code>DISCORD_WEBHOOK</code></td>
+      <td>Discord Webhook URL for alert notifications</td>
+      <td><code>"https://discord.com/api/webhooks/..."</code></td>
+    </tr>
+    <tr>
+      <td><code>ROOM_COUNT</code></td>
+      <td>Maximum number of rooms to extract per category page</td>
+      <td><code>40</code></td>
+    </tr>
+    <tr>
+      <td><code>PURPLE_ALERT_THRESHOLD</code></td>
+      <td>🟪 Alert will be sent when total prize battery value exceeds this number</td>
+      <td><code>9</code></td>
+    </tr>
+    <tr>
+      <td><code>RED_ALERT_AVG_THRESHOLD</code></td>
+      <td>🧧 Alert will be sent when <b>average battery value per prize</b> exceeds this number</td>
+      <td><code>3</code></td>
+    </tr>
+    <tr>
+      <td><code>CATEGORY_URLS</code></td>
+      <td>List of category page URLs (JSON Array format)</td>
+      <td><code>["https://live.bilibili.com/p/eden/area-tags?..."]</code></td>
+    </tr>
+    <tr>
+      <td><code>RED_SCAN_SWITCH</code></td>
+      <td>Switch for Scan 🧧</td>
+      <td><code>1</code></td>
+    </tr>
+      <tr>
+      <td><code>PURPLE_SCAN_SWITCH</code></td>
+      <td>Switch for Scan 🟪</td>
+      <td><code>1</code></td>
+    </tr>
+  </tbody>
+</table>
+---
+
+## 🚀 Quick Start
+
+### 1. Requirements
+* Windows OS (required for native `winsound` audio alarms).
+* Python 3.8 or higher.
+
+### 2. One-Click Setup
+Run `install.bat` on Windows to automatically install dependencies, download the Playwright Chromium browser binary.
+
+### 3. Start a scanner
+
+Run either script in a separate terminal window:
+
+```bat
+python scan_hot_rank.py
+python scan_categories.py
+python scan_top3.py
+```
+
+Run the scripts you need; they can run concurrently.
+
+`scanner.py` contains shared scan orchestration and lottery parsing. `browser_utils.py` contains Playwright browser/session helpers; neither is an executable entry point.
+
+
+
+## 🛡️ Exception & Risk Control Handling
+
+* **GeeTest Captchas and Login**: When GeeTest panel or login panel appears in Liver's room, the script sounds a beep alarm and loops until you manually pass the verification.
+* **Fatal Crashes**: Any top-level unhandled exception triggers `send_crash_notification` to forward the error log directly to Discord.

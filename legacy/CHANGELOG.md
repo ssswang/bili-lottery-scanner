@@ -1,5 +1,27 @@
 # Changelog
 
+## 2026-08-12
+### ✨ New
+- Split scanning into independent launchers: scan_hot_rank.py for Hot Rank rooms
+- scan_categories.py for configured categories
+- scan_top3.py for hourly web Top 3 reporting
+
+- Added hourly Top 3 collection at :00:05, with Discord reporting when notifications are enabled.
+- Added separate config.py for configuration parsing and discord_notifier.py for Discord notification delivery.
+- Added separate batch launchers for category and Top 3 scans.
+- Added runtime switches for red-packet and anchor-lottery scanning: RED_SCAN_SWITCH and PURPLE_SCAN_SWITCH.
+
+### 🚀 Improvements
+- Scanner now checks the lottery API response before performing page/UI checks, reducing unnecessary captcha/login detection on normal rooms.
+- Hot Rank scanning is limited to the first 80 rooms and now runs continuously; category scanning also runs continuously in its own process.
+- Reduced bandwidth use by blocking stream resources; this was later expanded to block GIF, SVG, and WebP assets as well.
+- Alert output now includes the sender of the highest-value red packet and clearer “maximum packet value” wording.
+- Notification, configuration, and shared scanning responsibilities were separated into dedicated modules.
+
+### Behaviour changes
+- The older combined scanner/scheduled-window approach was replaced by independently runnable, concurrent scanners.
+
+
 ## 2026-08-03
 **Compare**: [098a59b...d2062be](https://github.com/ssswang/bili-lottery-scanner/compare/098a59b2d844140088204934fae6e1f4cad618ab...d2062be524a9667f0e671594240727bea1e28801)
 ### ✨ New
