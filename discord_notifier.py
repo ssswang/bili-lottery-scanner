@@ -20,26 +20,49 @@ class DiscordNotifier:
             self.enabled = enabled
 
     def send_lottery_notification(
-        self, username, room_id, gift_text, requirement_str, total_price, end_time_str
+        self,
+        host_name,
+        room_id,
+        gift_text,
+        requirement_str,
+        total_price,
+        end_time_str,
+        sender_name="",
     ):
         """发送红包或天选抽奖通知。"""
         payload = {
             "embeds": [
                 {
-                    "title": f"🔥 红包/抽奖预警！主播: {username} ({room_id})",
+                    "title": f"🔥 红包/抽奖预警！主播: {host_name} ({room_id})",
                     "url": f"https://live.bilibili.com/{room_id}",
                     "color": 16729221,
                     "fields": [
                         {
-                            "name": "👤 直播间",
+                            "name": "👤 主播",
+                            "value": host_name or "未知主播",
+                            "inline": True,
+                        },
+                        {
+                            "name": "🏠 直播间",
                             "value": f"[{room_id}](https://live.bilibili.com/{room_id})",
-                            "inline": False,
+                            "inline": True,
                         },
                         {
                             "name": "🎁 包含礼物/奖品",
                             "value": gift_text[:1024] or "未知",
                             "inline": False,
                         },
+                        *(
+                            [
+                                {
+                                    "name": "📤 红包发送者",
+                                    "value": sender_name,
+                                    "inline": True,
+                                }
+                            ]
+                            if sender_name
+                            else []
+                        ),
                         {
                             "name": "🔑 参与门槛",
                             "value": requirement_str or "无要求",

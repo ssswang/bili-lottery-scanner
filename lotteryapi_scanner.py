@@ -43,17 +43,17 @@ class LotteryProcessor:
         self.red_threshold = red_threshold
         self.purple_threshold = purple_threshold
 
-    def process(self, room_id, payload):
+    def process(self, room_id, host_name, payload):
         """处理一个成功的 getLotteryInfoWeb 接口响应。"""
         data = payload.get("data", {})
         red_packets = data.get("popularity_red_pocket") or []
         anchor_data = data.get("anchor")
         if red_packets:
-            self.calculate_red_packets(room_id, red_packets)
+            self.calculate_red_packets(room_id, host_name, red_packets)
         if anchor_data:
-            self.calculate_anchor_lottery(room_id, anchor_data)
+            self.calculate_anchor_lottery(room_id, host_name, anchor_data)
 
-    def calculate_anchor_lottery(self, room_id, anchor_data):
+    def calculate_anchor_lottery(self, room_id, host_name, anchor_data):
         """解析天选抽奖，并在满足阈值时告警。"""
         require_text = anchor_data.get("require_text", "")
         if "舰长" in require_text or "提督" in require_text:
@@ -70,15 +70,15 @@ class LotteryProcessor:
         ).strftime("%Y-%m-%d %H:%M:%S")
         gift_text = f"🟪 奖品: {award_name} 最大中奖人数: {award_num}"
 
-        print(f"🎉 发现天选抽奖！房间: {room_id}")
+        print(f"🎉 发现天选抽奖！主播: {host_name} | 房间: {room_id}")
         print(f" {gift_text}\n 🔒 参与门槛: {require_text}\n 💰 价值: {total_price} 电池")
         if total_price > self.purple_threshold and remaining_seconds > 20:
             alert_beep()
             self.notifier.send_lottery_notification(
-                "未知主播", room_id, gift_text, require_text, total_price, draw_time
+                host_name, room_id, gift_text, require_text, total_price, draw_time
             )
 
-    def calculate_red_packets(self, room_id, red_packets):
+    def calculate_red_packets(self, room_id, host_name, red_packets):
         """解析红包包均价值；达到阈值时发送通知。"""
         requirement_map = {0: "无要求", 1: "需要关注", 2: "需要粉丝勋章", 3: "上舰"}
         gift_lines = []
@@ -87,10 +87,8 @@ class LotteryProcessor:
         requirement = "无要求"
         draw_time = "未知"
         sender_name = "未知"
-        host_name = "未知主播"
         for packet in red_packets:
             total_price = int(packet.get("total_price", 0)) // 100
-            host_name =  packet.get("anchor_name") or "未知主播"
             if total_price > max_total:
                 max_total = total_price
                 sender_name = packet.get("sender_name") or "未知"
@@ -117,7 +115,7 @@ class LotteryProcessor:
                 )
 
         print(
-            f"🎉 发现红包！房间: {room_id} | 最大包价值: {max_total} 电池 | "
+            f"🎉 发现红包！主播: {host_name} | 房间: {room_id} | 最大包价值: {max_total} 电池 | "
             f"发送者: {sender_name} | 包均: {max_average:.2f} 电池/人"
         )
         if max_average > self.red_threshold:
@@ -125,12 +123,18 @@ class LotteryProcessor:
             print(f" {gift_text}\n 🔒 参与门槛: {requirement}\n 🕒 开奖时间: {draw_time}")
             alert_beep()
             self.notifier.send_lottery_notification(
-                host_name, room_id, gift_text, requirement, max_total, draw_time
+                host_name,
+                room_id,
+                gift_text,
+                requirement,
+                max_total,
+                draw_time,
+                sender_name=sender_name,
             )
 
 
 def get_hot_rank_rooms(session, limit):
-    """获取符合现有筛选规则的人气榜房间号。"""
+    """获取符合筛选规则的人气榜房间，并保留接口返回的主播名。"""
     response = session.get(
         HOT_RANK_API_URL,
         params={"web_location": "444.7"},
@@ -144,7 +148,7 @@ def get_hot_rank_rooms(session, limit):
             f"获取人气榜失败：{payload.get('code')} {payload.get('message')}"
         )
 
-    room_ids = []
+    rooms = []
     for item in payload.get("data", {}).get("list", []):
         room_id = item.get("roomid")
         try:
@@ -152,16 +156,23 @@ def get_hot_rank_rooms(session, limit):
         except (TypeError, ValueError):
             continue
         if room_id and user_num < 300:
-            room_ids.append(str(room_id))
-        if len(room_ids) >= limit:
+            rooms.append(
+                {
+                    "room_id": str(room_id),
+                    "host_name": item.get("uname") or "未知主播",
+                }
+            )
+        if len(rooms) >= limit:
             break
-    print(f"成功获取人气榜房间数量：{len(room_ids)}")
-    return room_ids
+    print(f"成功获取人气榜房间数量：{len(rooms)}")
+    return rooms
 
 
-def scan_once(session, room_ids, wbi_keys, room_interval, processor, notifier):
+def scan_once(session, rooms, wbi_keys, room_interval, processor, notifier):
     """顺序扫描一轮房间；触发风控时立即停止本轮。"""
-    for index, room_id in enumerate(room_ids, start=1):
+    for index, room in enumerate(rooms, start=1):
+        room_id = room["room_id"]
+        host_name = room["host_name"]
         try:
             payload = request_lottery_info(session, room_id, wbi_keys)
         except (requests.RequestException, RuntimeError) as error:
@@ -176,9 +187,9 @@ def scan_once(session, room_ids, wbi_keys, room_interval, processor, notifier):
             if code != 0:
                 print(f"⚠️ 房间 {room_id} 接口返回：{code} {payload.get('message')}")
             else:
-                processor.process(room_id, payload)
+                processor.process(room_id, host_name, payload)
 
-        if index < len(room_ids):
+        if index < len(rooms):
             time.sleep(room_interval)
     return False
 
@@ -223,11 +234,11 @@ def main():
         try:
             # 每轮重新申请 ticket 和 WBI 密钥；每个房间再使用当前时间生成 wts/w_rid。
             wbi_keys = refresh_authorization(session)
-            room_ids = get_hot_rank_rooms(session, args.limit)
+            rooms = get_hot_rank_rooms(session, args.limit)
             hit_risk_control = scan_once(
-                session, room_ids, wbi_keys, room_interval, processor, notifier
+                session, rooms, wbi_keys, room_interval, processor, notifier
             )
-            if not room_ids:
+            if not rooms:
                 # 人气榜暂时为空时沿用房间间隔，避免无间隔重复请求列表接口。
                 time.sleep(room_interval)
         except (requests.RequestException, RuntimeError) as error:
