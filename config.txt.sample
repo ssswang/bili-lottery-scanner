@@ -3,11 +3,11 @@
 # Maximum eligible Hot Rank rooms scanned per list refresh.
 HOT_RANK_LIMIT=80
 
-# Minimum accepted value is 2 seconds. Keep this conservative to reduce -352 risk.
-ROOM_INTERVAL_SECONDS=5
+# Minimum accepted value is 3 seconds. Keep this conservative to reduce -352 risk.
+ROOM_INTERVAL_SECONDS=3
 
 # Wait after -352 or an authorization failure, in seconds.
-RISK_BACKOFF_SECONDS=900
+RISK_BACKOFF_SECONDS=60
 
 # Alert thresholds
 RED_ALERT_AVG_THRESHOLD=3

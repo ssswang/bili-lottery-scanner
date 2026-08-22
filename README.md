@@ -41,8 +41,8 @@ Edit `config.txt`. A minimal configuration is:
 
 ```ini
 HOT_RANK_LIMIT=80
-ROOM_INTERVAL_SECONDS=5
-RISK_BACKOFF_SECONDS=900
+ROOM_INTERVAL_SECONDS=3
+RISK_BACKOFF_SECONDS=60
 RED_ALERT_AVG_THRESHOLD=3
 PURPLE_ALERT_THRESHOLD=9
 BEEP_ENABLED=1
@@ -121,8 +121,8 @@ This requests one specified room and prints the API response. Use it to verify t
 | Key | Description | Default |
 | --- | --- | --- |
 | `HOT_RANK_LIMIT` | Maximum eligible Hot Rank rooms per cycle | `80` |
-| `ROOM_INTERVAL_SECONDS` | Delay between room requests; minimum allowed value is `2` seconds | `5` |
-| `RISK_BACKOFF_SECONDS` | Cooldown after `-352` or an authentication failure | `900` |
+| `ROOM_INTERVAL_SECONDS` | Delay between room requests; minimum allowed value is `3` seconds | `3` |
+| `RISK_BACKOFF_SECONDS` | Cooldown after `-352` or an authentication failure | `60` |
 | `RED_ALERT_AVG_THRESHOLD` | Red-packet average battery-value alert threshold | `3` |
 | `PURPLE_ALERT_THRESHOLD` | Anchor-lottery total battery-value alert threshold | `9` |
 | `BEEP_ENABLED` | Windows sound alert switch: `1` enabled, `0` disabled | `1` |

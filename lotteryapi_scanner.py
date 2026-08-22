@@ -12,8 +12,10 @@ import winsound
 from b_api import (
     USER_AGENT,
     load_authorized_session,
+    request_bilibili,
     refresh_authorization,
     request_lottery_info,
+    request_popular_anchor_rank,
 )
 from config import (
     HOT_RANK_LIMIT,
@@ -27,12 +29,27 @@ from discord_notifier import DiscordNotifier
 
 
 HOT_RANK_API_URL = "https://api.live.bilibili.com/xlive/web-interface/v1/index/getHotRankList"
+TOP_FIFTY_PARENT_AREA_IDS = {1, 5}
+TOP_FIFTY_MAX_ROOMS = 60
+POPULAR_ANCHOR_RANKS = (
+    {"area_id": 207, "parent_area_id": 1, "rank_type": 3},
+    {"area_id": 530, "parent_area_id": 1, "rank_type": 3},
+    {"area_id": 145, "parent_area_id": 1, "rank_type": 3},
+    {"area_id": 21, "parent_area_id": 1, "rank_type": 3},
+    {"area_id": 0, "parent_area_id": 5, "rank_type": 2},  # 电台
+    {"area_id": 0, "parent_area_id": 9, "rank_type": 2},  # 虚拟
+)
 
 
 def alert_beep():
     """达到告警阈值时播放 Windows 提示音。"""
     if BEEP_ENABLED:
         winsound.Beep(1200, 800)
+
+
+def format_rank_info(rank_name, rank):
+    """将接口的数字排名转换为便于终端和通知展示的文字。"""
+    return f"{rank_name}第 {rank} 名" if rank is not None else f"{rank_name}排名未提供"
 
 
 class LotteryProcessor:
@@ -43,17 +60,17 @@ class LotteryProcessor:
         self.red_threshold = red_threshold
         self.purple_threshold = purple_threshold
 
-    def process(self, room_id, host_name, payload):
+    def process(self, room_id, host_name, rank_info, payload):
         """处理一个成功的 getLotteryInfoWeb 接口响应。"""
         data = payload.get("data", {})
         red_packets = data.get("popularity_red_pocket") or []
         anchor_data = data.get("anchor")
         if red_packets:
-            self.calculate_red_packets(room_id, host_name, red_packets)
+            self.calculate_red_packets(room_id, host_name, rank_info, red_packets)
         if anchor_data:
-            self.calculate_anchor_lottery(room_id, host_name, anchor_data)
+            self.calculate_anchor_lottery(room_id, host_name, rank_info, anchor_data)
 
-    def calculate_anchor_lottery(self, room_id, host_name, anchor_data):
+    def calculate_anchor_lottery(self, room_id, host_name, rank_info, anchor_data):
         """解析天选抽奖，并在满足阈值时告警。"""
         require_text = anchor_data.get("require_text", "")
         if "舰长" in require_text or "提督" in require_text:
@@ -71,14 +88,23 @@ class LotteryProcessor:
         gift_text = f"🟪 奖品: {award_name} 最大中奖人数: {award_num}"
 
         print(f"🎉 发现天选抽奖！主播: {host_name} | 房间: {room_id}")
-        print(f" {gift_text}\n 🔒 参与门槛: {require_text}\n 💰 价值: {total_price} 电池")
+        print(
+            f" {gift_text}\n 🔒 参与门槛: {require_text}\n 💰 价值: {total_price} 电池"
+            f"\n 🏆 榜单排名: {rank_info}"
+        )
         if total_price > self.purple_threshold and remaining_seconds > 20:
             alert_beep()
             self.notifier.send_lottery_notification(
-                host_name, room_id, gift_text, require_text, total_price, draw_time
+                host_name,
+                room_id,
+                gift_text,
+                require_text,
+                total_price,
+                draw_time,
+                rank_info=rank_info,
             )
 
-    def calculate_red_packets(self, room_id, host_name, red_packets):
+    def calculate_red_packets(self, room_id, host_name, rank_info, red_packets):
         """解析红包包均价值；达到阈值时发送通知。"""
         requirement_map = {0: "无要求", 1: "需要关注", 2: "需要粉丝勋章", 3: "上舰"}
         gift_lines = []
@@ -115,12 +141,16 @@ class LotteryProcessor:
                 )
 
         print(
-            f"🎉 发现红包！主播: {host_name} | 房间: {room_id} | 最大包价值: {max_total} 电池 | "
-            f"发送者: {sender_name} | 包均: {max_average:.2f} 电池/人"
+            f"🎉 发现红包！主播: {host_name} | 房间: {room_id} | "
+            f"最大包价值: {max_total} 电池 | 发送者: {sender_name} | "
+            f"包均: {max_average:.2f} 电池/人"
         )
         if max_average > self.red_threshold:
             gift_text = "\n".join(gift_lines)
-            print(f" {gift_text}\n 🔒 参与门槛: {requirement}\n 🕒 开奖时间: {draw_time}")
+            print(
+                f" {gift_text}\n 🔒 参与门槛: {requirement}\n 🕒 开奖时间: {draw_time}"
+                f"\n 🏆 榜单排名: {rank_info}"
+            )
             alert_beep()
             self.notifier.send_lottery_notification(
                 host_name,
@@ -130,12 +160,17 @@ class LotteryProcessor:
                 max_total,
                 draw_time,
                 sender_name=sender_name,
+                rank_info=rank_info,
             )
+        else:
+            print(f" 🏆 榜单排名: {rank_info}")
 
 
 def get_hot_rank_rooms(session, limit):
     """获取符合筛选规则的人气榜房间，并保留接口返回的主播名。"""
-    response = session.get(
+    response = request_bilibili(
+        session,
+        "get",
         HOT_RANK_API_URL,
         params={"web_location": "444.7"},
         headers={"Referer": "https://live.bilibili.com/", "User-Agent": USER_AGENT},
@@ -160,6 +195,7 @@ def get_hot_rank_rooms(session, limit):
                 {
                     "room_id": str(room_id),
                     "host_name": item.get("uname") or "未知主播",
+                    "rank_infos": [format_rank_info("人气榜", item.get("rank"))],
                 }
             )
         if len(rooms) >= limit:
@@ -168,11 +204,83 @@ def get_hot_rank_rooms(session, limit):
     return rooms
 
 
+def get_popular_anchor_rank_rooms(session, wbi_keys):
+    """获取指定直播分区人气榜房间，并保留接口返回的主播名。"""
+    rooms = []
+    successful_rank_count = 0
+    for rank_params in POPULAR_ANCHOR_RANKS:
+        try:
+            payload = request_popular_anchor_rank(session, wbi_keys=wbi_keys, **rank_params)
+        except requests.RequestException as error:
+            print(f"⚠️ 获取分区人气榜失败：{rank_params}：{error}")
+            continue
+        if payload.get("code") != 0:
+            print(
+                "⚠️ 获取分区人气榜失败："
+                f"{rank_params}：{payload.get('code')} {payload.get('message')}"
+            )
+            continue
+
+        successful_rank_count += 1
+        for index, item in enumerate(payload.get("data", {}).get("list_new") or [], 1):
+            # 指定分区只按接口返回顺序取前 50 条，不依赖 rank 字段是否存在。
+            if (
+                rank_params["parent_area_id"] in TOP_FIFTY_PARENT_AREA_IDS
+                and index > TOP_FIFTY_MAX_ROOMS
+            ):
+                break
+
+            rank = item.get("rank")
+            room_id = item.get("room_id")
+            if not room_id:
+                continue
+            host_name = (
+                item.get("uinfo", {}).get("base", {}).get("name") or "未知主播"
+            )
+            rooms.append(
+                {
+                    "room_id": str(room_id),
+                    "host_name": host_name,
+                    "rank_infos": [format_rank_info("分区榜", rank)],
+                }
+            )
+    print(
+        "成功获取分区人气榜房间数量："
+        f"{len(rooms)}（{successful_rank_count}/{len(POPULAR_ANCHOR_RANKS)} 个分区）"
+    )
+    return rooms
+
+
+def merge_unique_rooms(*room_groups):
+    """按房间号合并多个榜单，并保留该房间的全部榜单排名。"""
+    rooms = []
+    rooms_by_id = {}
+    for room_group in room_groups:
+        for room in room_group:
+            room_id = room["room_id"]
+            if room_id not in rooms_by_id:
+                rooms_by_id[room_id] = room
+                rooms.append(room)
+                continue
+
+            existing_room = rooms_by_id[room_id]
+            if (
+                existing_room["host_name"] == "未知主播"
+                and room["host_name"] != "未知主播"
+            ):
+                existing_room["host_name"] = room["host_name"]
+            for rank_info in room["rank_infos"]:
+                if rank_info not in existing_room["rank_infos"]:
+                    existing_room["rank_infos"].append(rank_info)
+    return rooms
+
+
 def scan_once(session, rooms, wbi_keys, room_interval, processor, notifier):
     """顺序扫描一轮房间；触发风控时立即停止本轮。"""
     for index, room in enumerate(rooms, start=1):
         room_id = room["room_id"]
         host_name = room["host_name"]
+        rank_info = "、".join(room["rank_infos"])
         try:
             payload = request_lottery_info(session, room_id, wbi_keys)
         except (requests.RequestException, RuntimeError) as error:
@@ -181,13 +289,13 @@ def scan_once(session, rooms, wbi_keys, room_interval, processor, notifier):
             code = payload.get("code")
             if code == -352:
                 notifier.send_interaction_notification(
-                    "⚠️ 触发 -352 风控，本轮停止并进入 15 分钟冷却。"
+                    f"⚠️ 触发 -352 风控，本轮停止并冷却 {RISK_BACKOFF_SECONDS} 秒。"
                 )
                 return True
             if code != 0:
                 print(f"⚠️ 房间 {room_id} 接口返回：{code} {payload.get('message')}")
             else:
-                processor.process(room_id, host_name, payload)
+                processor.process(room_id, host_name, rank_info, payload)
 
         if index < len(rooms):
             time.sleep(room_interval)
@@ -195,15 +303,15 @@ def scan_once(session, rooms, wbi_keys, room_interval, processor, notifier):
 
 
 def main():
-    parser = argparse.ArgumentParser(description="直接轮询 B 站人气榜抽奖接口，不启动浏览器")
+    parser = argparse.ArgumentParser(description="直接轮询 B 站榜单抽奖接口，不启动浏览器")
     parser.add_argument(
-        "--limit", type=int, default=HOT_RANK_LIMIT, help="每轮最多扫描的房间数"
+        "--limit", type=int, default=HOT_RANK_LIMIT, help="人气榜最多获取的房间数"
     )
     parser.add_argument(
         "--room-interval",
         type=float,
         default=ROOM_INTERVAL_SECONDS,
-        help="每个房间请求之间的秒数，最低为 2",
+        help="每个房间请求之间的秒数，最低为 3",
     )
     parser.add_argument(
         "--discord-webhook", default=None, help="临时覆盖 config.txt 中的 Discord Webhook"
@@ -218,7 +326,7 @@ def main():
     if args.limit < 1:
         parser.error("--limit 必须大于 0")
 
-    room_interval = max(2, args.room_interval)
+    room_interval = max(3, args.room_interval)
     notifier = DiscordNotifier(args.discord_webhook)
     processor = LotteryProcessor(
         notifier, red_threshold=args.red_threshold, purple_threshold=args.purple_threshold
@@ -234,7 +342,10 @@ def main():
         try:
             # 每轮重新申请 ticket 和 WBI 密钥；每个房间再使用当前时间生成 wts/w_rid。
             wbi_keys = refresh_authorization(session)
-            rooms = get_hot_rank_rooms(session, args.limit)
+            hot_rank_rooms = get_hot_rank_rooms(session, args.limit)
+            popular_rank_rooms = get_popular_anchor_rank_rooms(session, wbi_keys)
+            rooms = merge_unique_rooms(hot_rank_rooms, popular_rank_rooms)
+            print(f"本轮去重后待扫描房间数量：{len(rooms)}")
             hit_risk_control = scan_once(
                 session, rooms, wbi_keys, room_interval, processor, notifier
             )

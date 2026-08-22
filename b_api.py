@@ -5,6 +5,7 @@ import argparse
 import hashlib
 import hmac
 import time
+from collections import deque
 from urllib.parse import quote, urlencode, urlparse
 
 import requests
@@ -13,6 +14,7 @@ from settings import load_session
 
 
 LOTTERY_API_URL = "https://api.live.bilibili.com/xlive/lottery-interface/v1/lottery/getLotteryInfoWeb"
+POPULAR_ANCHOR_RANK_API_URL = "https://api.live.bilibili.com/xlive/general-interface/v1/rank/getPopularAnchorRank"
 TICKET_API_URL = "https://api.bilibili.com/bapis/bilibili.api.ticket.v1.Ticket/GenWebTicket"
 NAV_API_URL = "https://api.bilibili.com/x/web-interface/nav"
 COOKIE_INFO_URL = "https://passport.bilibili.com/x/passport-login/web/cookie/info"
@@ -26,6 +28,67 @@ USER_AGENT = (
     "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
     "AppleWebKit/537.36 (KHTML, like Gecko) Chrome/140.0.0.0 Safari/537.36"
 )
+
+# 服务端限制为 10 分钟 500 次；保留余量给重试及其他 B 站页面操作。
+API_RATE_LIMIT = 450
+API_RATE_WINDOW_SECONDS = 10 * 60
+API_MIN_INTERVAL_SECONDS = API_RATE_WINDOW_SECONDS / API_RATE_LIMIT
+
+
+class ApiRateLimiter:
+    """按滑动时间窗口限制单个扫描会话的 B 站 API 请求数量。"""
+
+    def __init__(
+        self,
+        max_requests=API_RATE_LIMIT,
+        window_seconds=API_RATE_WINDOW_SECONDS,
+        minimum_interval_seconds=API_MIN_INTERVAL_SECONDS,
+    ):
+        self.max_requests = max_requests
+        self.window_seconds = window_seconds
+        self.minimum_interval_seconds = minimum_interval_seconds
+        self.request_times = deque()
+        self.last_request_time = None
+
+    def wait_for_slot(self):
+        """必要时等待最早的请求过期，再登记当前请求。"""
+        while True:
+            now = time.monotonic()
+            if self.last_request_time is not None:
+                interval_wait = self.minimum_interval_seconds - (
+                    now - self.last_request_time
+                )
+                if interval_wait > 0:
+                    time.sleep(interval_wait)
+                    continue
+
+            while (
+                self.request_times
+                and now - self.request_times[0] >= self.window_seconds
+            ):
+                self.request_times.popleft()
+
+            if len(self.request_times) < self.max_requests:
+                self.request_times.append(now)
+                self.last_request_time = now
+                return
+
+            wait_seconds = self.window_seconds - (now - self.request_times[0])
+            print(
+                "⏳ B 站 API 请求接近 10 分钟限制，"
+                f"等待 {max(1, round(wait_seconds))} 秒后继续。"
+            )
+            time.sleep(max(0.1, wait_seconds))
+
+
+def request_bilibili(session, method, url, **kwargs):
+    """通过当前会话发送一个受共享限流器保护的 B 站 API 请求。"""
+    limiter = getattr(session, "_bili_api_rate_limiter", None)
+    if limiter is None:
+        limiter = ApiRateLimiter()
+        session._bili_api_rate_limiter = limiter
+    limiter.wait_for_slot()
+    return getattr(session, method)(url, **kwargs)
 
 
 def parse_cookie_header(cookie_header):
@@ -72,7 +135,9 @@ def get_bili_ticket(session):
     hexsign = hmac.new(
         b"XgwSnGZ1p", f"ts{timestamp}".encode("utf-8"), hashlib.sha256
     ).hexdigest()
-    response = session.post(
+    response = request_bilibili(
+        session,
+        "post",
         TICKET_API_URL,
         params={
             "key_id": "ec02",
@@ -93,7 +158,9 @@ def get_bili_ticket(session):
 
 def get_wbi_keys(session):
     """从导航接口获取当天的 WBI 实时密钥。"""
-    response = session.get(
+    response = request_bilibili(
+        session,
+        "get",
         NAV_API_URL,
         headers={"Referer": "https://www.bilibili.com/"},
         timeout=10,
@@ -129,7 +196,9 @@ def sign_wbi(params, img_key, sub_key):
 
 def check_cookie_refresh(session):
     """仅检查 Cookie 是否需要官方刷新；不自动执行刷新或验证码流程。"""
-    response = session.get(
+    response = request_bilibili(
+        session,
+        "get",
         COOKIE_INFO_URL,
         params={"csrf": get_csrf(session)},
         headers={"Referer": "https://www.bilibili.com/"},
@@ -176,10 +245,43 @@ def request_lottery_info(session, room_id, wbi_keys=None):
         img_key,
         sub_key,
     )
-    response = session.get(
+    response = request_bilibili(
+        session,
+        "get",
         LOTTERY_API_URL,
         params=params,
         headers={"Referer": f"https://live.bilibili.com/{room_id}"},
+        timeout=10,
+    )
+    response.raise_for_status()
+    return response.json()
+
+
+def request_popular_anchor_rank(
+    session, area_id, parent_area_id, rank_type, wbi_keys=None
+):
+    """请求一个直播分区人气榜，并为本次请求生成新的 WBI 签名。"""
+    img_key, sub_key = wbi_keys or get_wbi_keys(session)
+    params = sign_wbi(
+        {
+            "area_id": area_id,
+            "clientType": "2",
+            "location_code": "",
+            "parent_area_id": parent_area_id,
+            "rank_id": "0",
+            "rank_type": rank_type,
+            "uid": "0",
+            "web_location": "445.28",
+        },
+        img_key,
+        sub_key,
+    )
+    response = request_bilibili(
+        session,
+        "get",
+        POPULAR_ANCHOR_RANK_API_URL,
+        params=params,
+        headers={"Referer": "https://live.bilibili.com/"},
         timeout=10,
     )
     response.raise_for_status()

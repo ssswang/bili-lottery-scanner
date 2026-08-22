@@ -28,6 +28,7 @@ class DiscordNotifier:
         total_price,
         end_time_str,
         sender_name="",
+        rank_info="",
     ):
         """发送红包或天选抽奖通知。"""
         payload = {
@@ -78,6 +79,17 @@ class DiscordNotifier:
                             "value": end_time_str or "未知",
                             "inline": False,
                         },
+                        *(
+                            [
+                                {
+                                    "name": "🏆 榜单排名",
+                                    "value": rank_info,
+                                    "inline": False,
+                                }
+                            ]
+                            if rank_info
+                            else []
+                        ),
                     ],
                     "footer": {"text": "B站直播红包/天选抽奖直连监控"},
                 }

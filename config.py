@@ -45,9 +45,9 @@ def get_float(config, key, default, minimum=None):
 CONFIG = load_config()
 
 # 扫描配置
-HOT_RANK_LIMIT = get_int(CONFIG, "HOT_RANK_LIMIT", 80, minimum=1)
-ROOM_INTERVAL_SECONDS = get_float(CONFIG, "ROOM_INTERVAL_SECONDS", 5, minimum=2)
-RISK_BACKOFF_SECONDS = get_int(CONFIG, "RISK_BACKOFF_SECONDS", 900, minimum=60)
+HOT_RANK_LIMIT = get_int(CONFIG, "HOT_RANK_LIMIT", 100, minimum=1)
+ROOM_INTERVAL_SECONDS = get_float(CONFIG, "ROOM_INTERVAL_SECONDS", 3, minimum=3)
+RISK_BACKOFF_SECONDS = get_int(CONFIG, "RISK_BACKOFF_SECONDS", 60, minimum=60)
 RED_ALERT_AVG_THRESHOLD = get_float(CONFIG, "RED_ALERT_AVG_THRESHOLD", 3, minimum=0)
 PURPLE_ALERT_THRESHOLD = get_int(CONFIG, "PURPLE_ALERT_THRESHOLD", 9, minimum=0)
 BEEP_ENABLED = get_int(CONFIG, "BEEP_ENABLED", 1) == 1
