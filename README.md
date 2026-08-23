@@ -41,6 +41,8 @@ Edit `config.txt`. A minimal configuration is:
 
 ```ini
 HOT_RANK_LIMIT=80
+SCAN_HOT_RANK=1
+SCAN_POPULAR_RANKS=1
 ROOM_INTERVAL_SECONDS=3
 RISK_BACKOFF_SECONDS=60
 RED_ALERT_AVG_THRESHOLD=3
@@ -120,6 +122,8 @@ This requests one specified room and prints the API response. Use it to verify t
 
 | Key | Description | Default |
 | --- | --- | --- |
+| `SCAN_HOT_RANK` | Scan the Hot Rank room list: `1` enabled, `0` disabled | `1` |
+| `SCAN_POPULAR_RANKS` | Scan the configured category-rank room lists: `1` enabled, `0` disabled | `1` |
 | `HOT_RANK_LIMIT` | Maximum eligible Hot Rank rooms per cycle | `80` |
 | `ROOM_INTERVAL_SECONDS` | Delay between room requests; minimum allowed value is `3` seconds | `3` |
 | `RISK_BACKOFF_SECONDS` | Cooldown after `-352` or an authentication failure | `60` |

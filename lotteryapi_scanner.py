@@ -24,6 +24,8 @@ from config import (
     RED_ALERT_AVG_THRESHOLD,
     RISK_BACKOFF_SECONDS,
     ROOM_INTERVAL_SECONDS,
+    SCAN_HOT_RANK,
+    SCAN_POPULAR_RANKS,
 )
 from discord_notifier import DiscordNotifier
 
@@ -325,8 +327,16 @@ def main():
     args = parser.parse_args()
     if args.limit < 1:
         parser.error("--limit 必须大于 0")
+    if not SCAN_HOT_RANK and not SCAN_POPULAR_RANKS:
+        parser.error("SCAN_HOT_RANK 和 SCAN_POPULAR_RANKS 不能同时关闭")
 
     room_interval = max(3, args.room_interval)
+    enabled_sources = []
+    if SCAN_HOT_RANK:
+        enabled_sources.append("人气榜")
+    if SCAN_POPULAR_RANKS:
+        enabled_sources.append("分区榜")
+    print(f"已启用扫描来源：{'、'.join(enabled_sources)}")
     notifier = DiscordNotifier(args.discord_webhook)
     processor = LotteryProcessor(
         notifier, red_threshold=args.red_threshold, purple_threshold=args.purple_threshold
@@ -342,8 +352,14 @@ def main():
         try:
             # 每轮重新申请 ticket 和 WBI 密钥；每个房间再使用当前时间生成 wts/w_rid。
             wbi_keys = refresh_authorization(session)
-            hot_rank_rooms = get_hot_rank_rooms(session, args.limit)
-            popular_rank_rooms = get_popular_anchor_rank_rooms(session, wbi_keys)
+            hot_rank_rooms = (
+                get_hot_rank_rooms(session, args.limit) if SCAN_HOT_RANK else []
+            )
+            popular_rank_rooms = (
+                get_popular_anchor_rank_rooms(session, wbi_keys)
+                if SCAN_POPULAR_RANKS
+                else []
+            )
             rooms = merge_unique_rooms(hot_rank_rooms, popular_rank_rooms)
             print(f"本轮去重后待扫描房间数量：{len(rooms)}")
             hit_risk_control = scan_once(

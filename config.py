@@ -45,6 +45,8 @@ def get_float(config, key, default, minimum=None):
 CONFIG = load_config()
 
 # 扫描配置
+SCAN_HOT_RANK = get_int(CONFIG, "SCAN_HOT_RANK", 1) == 1
+SCAN_POPULAR_RANKS = get_int(CONFIG, "SCAN_POPULAR_RANKS", 1) == 1
 HOT_RANK_LIMIT = get_int(CONFIG, "HOT_RANK_LIMIT", 100, minimum=1)
 ROOM_INTERVAL_SECONDS = get_float(CONFIG, "ROOM_INTERVAL_SECONDS", 3, minimum=3)
 RISK_BACKOFF_SECONDS = get_int(CONFIG, "RISK_BACKOFF_SECONDS", 60, minimum=60)

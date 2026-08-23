@@ -3,6 +3,10 @@
 # Maximum eligible Hot Rank rooms scanned per list refresh.
 HOT_RANK_LIMIT=80
 
+# Scan sources: 1 = enabled, 0 = disabled.
+SCAN_HOT_RANK=1
+SCAN_POPULAR_RANKS=1
+
 # Minimum accepted value is 3 seconds. Keep this conservative to reduce -352 risk.
 ROOM_INTERVAL_SECONDS=3
 
