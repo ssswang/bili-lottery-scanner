@@ -119,13 +119,13 @@ class DiscordNotifier:
         """发送页面人气榜前三名通知。"""
         fields = []
         for rank, room in enumerate(rank_rooms, start=1):
-            user_id = room["user_id"]
+            room_id = room["room_id"]
             anchor_name = room["anchor_name"]
             fields.append(
                 {
                     "name": f"Top {rank}",
                     "value": (
-                        f"主页：[{anchor_name}](https://space.bilibili.com/{user_id})\n"
+                        f"直播间：[{room_id}](https://live.bilibili.com/{room_id})\n"
                         f"主播：{anchor_name}"
                     ),
                     "inline": False,

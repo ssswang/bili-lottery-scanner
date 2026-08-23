@@ -6,15 +6,39 @@ from datetime import datetime, timedelta
 import time
 
 from playwright.sync_api import sync_playwright
+import requests
 
 from discord_notifier import DiscordNotifier
 
 
 APP_HOT_RANK_URL = "https://live.bilibili.com/p/html/live-app-hotrank/index.html#/v2"
+ROOM_ID_BY_UID_API_URL = "https://api.live.bilibili.com/room/v2/Room/room_id_by_uid"
+
+
+def get_room_id_by_uid(user_id):
+    """将页面榜单中的主播 UID 转换为直播间 ID。"""
+    try:
+        response = requests.get(
+            ROOM_ID_BY_UID_API_URL,
+            params={"uid": user_id},
+            headers={"User-Agent": "Mozilla/5.0", "Referer": "https://live.bilibili.com/"},
+            timeout=10,
+        )
+        response.raise_for_status()
+        payload = response.json()
+    except requests.RequestException as error:
+        print(f"获取直播间 ID 失败：{error}")
+        return None
+
+    room_id = payload.get("data", {}).get("room_id")
+    if payload.get("code") != 0 or not room_id:
+        print(f"未找到直播间 ID：{payload.get('message', payload.get('msg', '未知错误'))}")
+        return None
+    return str(room_id)
 
 
 def get_top_rank_rooms(page):
-    """读取页面人气榜前三名的主播用户 ID 和名称。"""
+    """读取页面人气榜前三名，并将主播 UID 转换为直播间 ID。"""
     print(f"[{datetime.now().strftime('%Y-%m-%d %H:%M:%S')}] 获取页面人气榜前三名")
     page.goto(APP_HOT_RANK_URL)
     items = page.locator("div.top-list > div.top-item")
@@ -33,16 +57,17 @@ def get_top_rank_rooms(page):
             anchor_name = item.locator("div.anchor-name").inner_text().strip()
         except Exception:
             anchor_name = "未知主播"
-        # 页面 data-id 对应主播用户 ID，可用于跳转其个人主页。
         if user_id:
-            rank_rooms.append({"user_id": user_id, "anchor_name": anchor_name})
+            room_id = get_room_id_by_uid(user_id)
+            if room_id:
+                rank_rooms.append({"room_id": room_id, "anchor_name": anchor_name})
     return rank_rooms
 
 
 def print_top_rank_rooms(rank_rooms):
     """按排名输出页面人气榜前三名。"""
     for rank, room in enumerate(rank_rooms, start=1):
-        print(f"Top {rank}：主播主页 ID {room['user_id']} | 主播 {room['anchor_name']}")
+        print(f"Top {rank}：直播间 ID {room['room_id']} | 主播 {room['anchor_name']}")
 
 
 def get_next_scan_time():

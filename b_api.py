@@ -18,6 +18,8 @@ POPULAR_ANCHOR_RANK_API_URL = "https://api.live.bilibili.com/xlive/general-inter
 TICKET_API_URL = "https://api.bilibili.com/bapis/bilibili.api.ticket.v1.Ticket/GenWebTicket"
 NAV_API_URL = "https://api.bilibili.com/x/web-interface/nav"
 COOKIE_INFO_URL = "https://passport.bilibili.com/x/passport-login/web/cookie/info"
+HOME_PAGE_URL = "https://www.bilibili.com/"
+FINGERPRINT_API_URL = "https://api.bilibili.com/x/frontend/finger/spi"
 WBI_MIXIN_KEY_TAB = [
     46, 47, 18, 2, 53, 8, 23, 32, 15, 50, 10, 31, 58, 3, 45, 35,
     27, 43, 5, 49, 33, 9, 42, 19, 29, 28, 14, 39, 12, 38, 41, 13,
@@ -129,6 +131,56 @@ def create_session(cookie_header):
     return session
 
 
+def ensure_device_cookies(session):
+    """按公开设备接口补齐缺失的 buvid3、buvid4 与 b_nut。"""
+    required_device_cookies = ("buvid3", "buvid4", "b_nut")
+    missing_cookies = [
+        name for name in required_device_cookies if not get_cookie_value(session, name)
+    ]
+    if not missing_cookies:
+        return []
+
+    # 首页响应会由 requests 自动写入其 Set-Cookie 中的 buvid3 与 b_nut。
+    if "buvid3" in missing_cookies or "b_nut" in missing_cookies:
+        response = request_bilibili(
+            session,
+            "get",
+            HOME_PAGE_URL,
+            headers={
+                "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
+                "Referer": HOME_PAGE_URL,
+            },
+            timeout=10,
+        )
+        response.raise_for_status()
+
+    missing_cookies = [
+        name for name in required_device_cookies if not get_cookie_value(session, name)
+    ]
+    if "buvid3" in missing_cookies or "buvid4" in missing_cookies:
+        response = request_bilibili(
+            session,
+            "get",
+            FINGERPRINT_API_URL,
+            headers={"Referer": HOME_PAGE_URL},
+            timeout=10,
+        )
+        response.raise_for_status()
+        payload = response.json()
+        fingerprint_data = payload.get("data", {}) if payload.get("code") == 0 else {}
+        for cookie_name, value_key in (("buvid3", "b_3"), ("buvid4", "b_4")):
+            if not get_cookie_value(session, cookie_name):
+                value = fingerprint_data.get(value_key)
+                if value:
+                    session.cookies.set(
+                        cookie_name, value, domain=".bilibili.com", path="/"
+                    )
+
+    return [
+        name for name in required_device_cookies if not get_cookie_value(session, name)
+    ]
+
+
 def get_bili_ticket(session):
     """申请新的 bili_ticket，并写回当前 Session 以降低接口风控概率。"""
     timestamp = int(time.time())
@@ -217,14 +269,23 @@ def load_authorized_session():
         raise RuntimeError("请先运行 qr_login.py 完成二维码登录。")
 
     session = create_session(cookie_header)
-    required_cookies = ("SESSDATA", "bili_jct", "buvid3", "buvid4", "b_nut")
-    missing_cookies = [
-        name for name in required_cookies if not get_cookie_value(session, name)
+    missing_login_cookies = [
+        name for name in ("SESSDATA", "bili_jct") if not get_cookie_value(session, name)
     ]
-    if missing_cookies:
+    if missing_login_cookies:
         raise RuntimeError(
-            "直接 API 会话缺少设备/登录 Cookie："
-            f"{', '.join(missing_cookies)}。请重新运行 qr_login.py。"
+            "直接 API 会话缺少登录 Cookie："
+            f"{', '.join(missing_login_cookies)}。请重新运行 qr_login.py。"
+        )
+
+    try:
+        missing_device_cookies = ensure_device_cookies(session)
+    except requests.RequestException as error:
+        raise RuntimeError(f"自动补齐设备 Cookie 失败：{error}") from error
+    if missing_device_cookies:
+        raise RuntimeError(
+            "直接 API 会话缺少设备 Cookie，自动补齐未完成："
+            f"{', '.join(missing_device_cookies)}。请重新运行 qr_login.py。"
         )
     return session
 
