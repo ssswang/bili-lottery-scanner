@@ -151,11 +151,12 @@ This requests one specified room and prints the API response. Use it to verify t
 ## Project structure
 
 ```text
-qr_login.py             QR login and isolated session storage
-settings.py             Login session read/write helpers
+qr_login.py             Compatibility launcher for QR login
 config.py               config.txt parsing and default values
-b_api.py                Device-Cookie bootstrap, WBI signing, ticket refresh, and API requests
-lotteryapi_scanner.py   Configured rank-source polling and lottery parsing
+auth_manager.py         QR session storage, device cookies, WBI signing, ticket refresh, and rate limiting
+b_api.py                Lottery and category-ranking API requests
+room_lists.py           Rank-source room collection, normalization, and combined-list building
+lotteryapi_scanner.py   Lottery polling and red-packet/anchor-lottery event parsing
 discord_notifier.py     Discord notifications
 scan_top3.py            Hourly page Hot Rank Top 3 scanner with UID-to-room mapping (Playwright)
 scan_top3.bat           Windows launcher for scan_top3.py

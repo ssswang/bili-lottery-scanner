@@ -5,6 +5,8 @@ import traceback
 from datetime import datetime, timedelta
 import time
 
+from playwright.sync_api import Error as PlaywrightError
+from playwright.sync_api import TimeoutError as PlaywrightTimeoutError
 from playwright.sync_api import sync_playwright
 import requests
 
@@ -40,7 +42,16 @@ def get_room_id_by_uid(user_id):
 def get_top_rank_rooms(page):
     """读取页面人气榜前三名，并将主播 UID 转换为直播间 ID。"""
     print(f"[{datetime.now().strftime('%Y-%m-%d %H:%M:%S')}] 获取页面人气榜前三名")
-    page.goto(APP_HOT_RANK_URL)
+    try:
+        # 该 SPA 的 load 事件可能被长期连接阻塞；DOM 可用后即可读取榜单。
+        page.goto(APP_HOT_RANK_URL, wait_until="domcontentloaded", timeout=15_000)
+    except PlaywrightTimeoutError:
+        print("获取页面人气榜超时，跳过本次扫描。")
+        return []
+    except PlaywrightError as error:
+        print(f"打开页面人气榜失败：{error}")
+        return []
+
     items = page.locator("div.top-list > div.top-item")
 
     try:
