@@ -6,7 +6,6 @@
 import json
 import os
 import re
-import sys
 import time
 import traceback
 import urllib.request
@@ -71,8 +70,8 @@ CATEGORY_URLS = get_list_config(CONFIG, "CATEGORY_URLS", '["https://live.bilibil
 ROOM_COUNT = get_int_config(CONFIG, "ROOM_COUNT", 40)
 IM_SWITCH = get_int_config(CONFIG, "IM_SWITCH", 0)
 DISCORD_WEBHOOK = CONFIG.get("DISCORD_WEBHOOK", "")
-RED_ALERT_AVG_THRESHOLD = get_int_config(CONFIG, "RED_ALERT_AVG_THRESHOLD", 3)
-PURPLE_ALERT_THRESHOLD = get_int_config(CONFIG, "PURPLE_ALERT_THRESHOLD", 9)
+RED_ALERT_AVG_THRESHOLD = get_int_config(CONFIG, "RED_ALERT_AVG_THRESHOLD", 9)
+PURPLE_ALERT_THRESHOLD = get_int_config(CONFIG, "PURPLE_ALERT_THRESHOLD", 10000)
 BEEP_SWITCH = get_int_config(CONFIG, "BEEP_SWITCH", 1)
 
 def send_lottery_notification(
@@ -217,12 +216,16 @@ def wait_until_geetest_finished(page):
 
 
 def detect_login_window(page):
-    """弹出登录框即判定为触发了 352 风控"""
+    """Wait for the user to complete QR-code login when the login panel appears."""
     selector = "div.login-scan-wp"
     if page.locator(selector).count():
         alarm()
-        send_interaction_notification("🚨 触发 352 风控（弹出强制登录框），请更换 IP 或重启尝试至显示验证码")
-        sys.exit("退出")
+        send_interaction_notification("🚨 检测到登录窗口，请使用哔哩哔哩 App 扫描二维码登录。登录完成后程序将自动继续。")
+
+        while page.locator(selector).count():
+            page.wait_for_timeout(1000)
+
+        send_interaction_notification("✅ 二维码登录完成，继续运行。")
     return False
 
 def detect_vip_stream(page):
