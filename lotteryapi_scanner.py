@@ -34,6 +34,7 @@ from config import (
     SCAN_POPULAR_RANKS,
 )
 from discord_notifier import DiscordNotifier
+from risk_control import RiskControlHandler
 from room_lists import RoomListBuilder
 
 
@@ -199,13 +200,8 @@ class LotteryProcessor:
             self.anchor_lottery_event.process(room_id, host_name, rank_info, anchor_data)
 
 
-def scan_once(session, rooms, wbi_keys, room_interval, processor):
-    """顺序扫描一轮房间；每个房间只请求一次抽奖接口。返回是否连续触发风控。
-
-    偶发的 -352 是突发频率检测（冷却几十秒即恢复），跳过该房间并停顿后
-    继续扫描；只有连续多次 -352 才认定身份被标记，返回 True 丢弃重建。
-    """
-    consecutive_risk = 0
+def scan_once(account_name, session, rooms, wbi_keys, room_interval, processor, risk_control):
+    """顺序扫描一个房间分片；命中 -352 时立即结束该账号的本轮分片。"""
     # 榜单查询刚结束，先隔开一个间隔再开始房间扫描，避免突发触发频率检测。
     time.sleep(room_interval)
     for index, room in enumerate(rooms, start=1):
@@ -219,14 +215,8 @@ def scan_once(session, rooms, wbi_keys, room_interval, processor):
         else:
             code = payload.get("code")
             if code == -352:
-                consecutive_risk += 1
-                if consecutive_risk >= 2:
-                    print(f"⚠️ 连续 {consecutive_risk} 个房间触发 -352，判定身份被标记，本轮停止。")
-                    return True
-                print(f"⚠️ 房间 {room_id} 触发 -352，跳过并停顿 {RISK_BACKOFF_SECONDS} 秒。")
-                time.sleep(RISK_BACKOFF_SECONDS)
-                continue
-            consecutive_risk = 0
+                risk_control.record_352(account_name, room_id)
+                return
             if code != 0:
                 print(f"⚠️ 房间 {room_id} 接口返回：{code} {payload.get('message')}")
             else:
@@ -235,7 +225,6 @@ def scan_once(session, rooms, wbi_keys, room_interval, processor):
         if index < len(rooms):
             # 保持 3.x 秒级随机间隔，避免机械等间隔请求被频率检测识别。
             time.sleep(random.uniform(room_interval, room_interval + 0.9))
-    return False
 
 
 def split_rooms(rooms, shard_count):
@@ -246,11 +235,13 @@ def split_rooms(rooms, shard_count):
     return shards
 
 
-def scan_rooms_parallel(list_session, worker_sessions, rooms, wbi_keys, room_interval, processor, notifier):
+def scan_rooms_parallel(
+    list_session, worker_sessions, rooms, wbi_keys, room_interval, processor, risk_control
+):
     """把房间列表分成多份，通过独立账号会话并发扫描。
 
-    worker_sessions 为 (身份键, 会话) 列表。返回两个集合：命中 -352 的
-    身份键，以及连接失败的身份键。
+    worker_sessions 为 (身份键, 会话) 列表。`risk_control` 统一记录 -352；
+    本函数仅返回连接失败的身份键。
     """
     workers = max(1, min(len(worker_sessions), len(rooms))) if rooms else 0
     if workers <= 1:
@@ -261,31 +252,41 @@ def scan_rooms_parallel(list_session, worker_sessions, rooms, wbi_keys, room_int
             worker_sessions[0] if worker_sessions else ("direct", list_session)
         )
         try:
-            hit_risk_control = scan_once(session, rooms, wbi_keys, room_interval, processor)
+            scan_once(
+                identity_key,
+                session,
+                rooms,
+                wbi_keys,
+                room_interval,
+                processor,
+                risk_control,
+            )
         except (requests.RequestException, RuntimeError) as error:
             print(f"⚠️ 扫描线程失败：{error}")
-            return set(), {identity_key}
-        return ({identity_key} if hit_risk_control else set()), set()
+            return {identity_key}
+        return set()
 
     shards = split_rooms(rooms, workers)
     print(f"🔀 本轮使用 {workers} 个账号连接并发扫描：{[len(shard) for shard in shards]} 个房间/连接")
-    risk_keys = set()
     dead_keys = set()
     lock = threading.Lock()
 
     def worker(identity_key, session, shard):
         try:
-            hit_risk_control = scan_once(
-                session, shard, wbi_keys, room_interval, processor
+            scan_once(
+                identity_key,
+                session,
+                shard,
+                wbi_keys,
+                room_interval,
+                processor,
+                risk_control,
             )
         except (requests.RequestException, RuntimeError) as error:
             print(f"⚠️ 扫描线程失败：{error}")
             with lock:
                 dead_keys.add(identity_key)
             return
-        if hit_risk_control:
-            with lock:
-                risk_keys.add(identity_key)
 
     threads = [
         threading.Thread(
@@ -299,12 +300,7 @@ def scan_rooms_parallel(list_session, worker_sessions, rooms, wbi_keys, room_int
         thread.start()
     for thread in threads:
         thread.join()
-    if risk_keys:
-        # 多个线程可能同时命中风控，这里只汇总发送一次通知。
-        notifier.send_interaction_notification(
-            f"⚠️ 触发 -352 风控，本轮停止并冷却 {RISK_BACKOFF_SECONDS} 秒。"
-        )
-    return risk_keys, dead_keys
+    return dead_keys
 
 
 def main():
@@ -347,6 +343,7 @@ def main():
         purple_threshold=args.purple_threshold,
         process_anchor_lottery=PROCESS_ANCHOR_LOTTERY,
     )
+    risk_control = RiskControlHandler(RISK_BACKOFF_SECONDS)
     print(f"天选事件处理：{'开启' if PROCESS_ANCHOR_LOTTERY else '关闭'}")
     required_account_names = ("acct1", "acct2")
     scan_account_names = (*required_account_names, "acct3")
@@ -418,14 +415,14 @@ def main():
             worker_sessions = [
                 (key, session) for key, session in worker_map.items() if session
             ]
-            risk_keys, dead_keys = scan_rooms_parallel(
+            dead_keys = scan_rooms_parallel(
                 list_session,
                 worker_sessions,
                 rooms,
                 wbi_keys,
                 room_interval,
                 processor,
-                notifier,
+                risk_control,
             )
             # 连接失败的账号会话下轮重新建立；不会触碰代理配置或代理文件。
             for key in dead_keys:
@@ -436,17 +433,11 @@ def main():
                 time.sleep(room_interval)
         except (requests.RequestException, RuntimeError) as error:
             print(f"⚠️ 本轮扫描失败：{error}")
-            risk_keys = {"acct1"}
-            dead_keys = set()
+            if not risk_control.cooldown_if_needed():
+                time.sleep(RISK_BACKOFF_SECONDS)
+            continue
 
-        if risk_keys:
-            # 登录身份命中风控时仅冷却，保留账号会话供下一轮继续使用。
-            print(
-                f"⚠️ 命中风控的账号：{('、'.join(risk_keys))}，"
-                f"等待 {RISK_BACKOFF_SECONDS} 秒后开始下一轮。"
-            )
-            print(f"等待 {RISK_BACKOFF_SECONDS} 秒后开始下一轮。")
-            time.sleep(RISK_BACKOFF_SECONDS)
+        risk_control.cooldown_if_needed()
 
 
 if __name__ == "__main__":

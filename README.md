@@ -148,7 +148,7 @@ This requests one specified room and prints the API response. Use it to verify t
 
 ## Risk control and troubleshooting
 
-- A single `-352` skips that room and enters the configured cooldown. Two consecutive `-352` responses stop that account's partition for the current cycle. Do not lower the request interval or repeatedly restart the script to continue requesting.
+- Any `-352` response stops that account's remaining room partition for the current cycle. The scanner records the affected account names in the console, sends no Discord risk notification, waits 60 seconds, and then starts the next cycle. Do not lower the request interval or repeatedly restart the script to continue requesting.
 - The scanner fills missing `buvid3`, `buvid4`, and `b_nut`, generates per-account `_uuid`, `b_lsid`, and `buvid_fp`, then refuses to scan if any active accounts share a key device identifier. It cannot replace the required `SESSDATA` and `bili_jct` login Cookies.
 - If Cookies need refresh, a login expires, or the device-ID check fails, log in to the affected account again with `python qr_login.py --name acct1`, `acct2`, or `acct3`.
 - This tool does not automate captchas, `v_voucher`, or other manual verification.
@@ -165,6 +165,7 @@ config.py               config.txt parsing and default values
 auth_manager.py         QR session storage, device cookies, WBI signing, ticket refresh, and rate limiting
 b_api.py                Lottery and category-ranking API requests
 room_lists.py           Rank-source room collection, normalization, and combined-list building
+risk_control.py         Centralized -352 account tracking and cooldown handling
 lotteryapi_scanner.py   Lottery polling and red-packet/anchor-lottery event parsing
 discord_notifier.py     Discord notifications
 scan_top3.py            Hourly page Hot Rank Top 3 scanner with UID-to-room mapping (Playwright)
