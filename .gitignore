@@ -1,7 +1,8 @@
 config.txt
 /__pycache__
-session_state.json
-lotteryapi_session.json
+proxy/proxies.txt
+scan_log.txt
+scan_anon_log.txt
+*.json
 qr_login.png
-direct_lottery_login_qr.png
-direct_lottery_session.json
+/proxy/__pycache__

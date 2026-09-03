@@ -1,16 +1,18 @@
 # B Zhan Lottery API Scanner
 
-A browser-free monitoring tool for B Zhan live-stream lotteries. It uses the official B Zhan Web QR login to create an isolated session, requests `getLotteryInfoWeb` directly, scans enabled room-ranking sources, and reports matching red packets and anchor lotteries to the console or Discord.
+A browser-free monitoring tool for B Zhan live-stream lotteries. It uses official B Zhan Web QR login sessions, requests `getLotteryInfoWeb` directly, scans enabled room-ranking sources, and reports matching red packets and optional anchor lotteries to the console or Discord.
 
 ## Features
 
 - Official Web QR login without reading an existing browser Cookie store.
+- `acct1` and `acct2` are required direct sessions; an optional `acct3` session can join them, for a maximum of three concurrent room scanners. `acct1` also requests the ranking lists.
+- Before scanning, the program verifies that active accounts do not share `buvid3`, `buvid4`, `buvid_fp`, `_uuid`, or `b_lsid` device identifiers.
 - Independently enables or disables the Hot Rank source and configured category-ranking sources.
 - Reads four configured `parent_area_id=1` category lists, the radio list, and the virtual-streamer list. The four category lists and radio list use their first 50 returned rooms.
 - Merges room sources by room ID while retaining all reported rank positions.
-- Scans sequentially at a configurable interval without concurrent room requests.
-- Applies a shared request limiter: at most 450 B Zhan API requests per rolling 10-minute window, paced at roughly 1.33 seconds or slower.
-- Parses red-packet average value, maximum value, entry requirements, draw time, and anchor lotteries.
+- Splits rooms between two or three active accounts and scans all partitions concurrently. Each account waits a random 3.0–3.9 seconds between room API requests by default.
+- Applies a per-session request limiter: at most 450 B Zhan API requests per rolling 10-minute window.
+- Parses red-packet average value, maximum value, entry requirements, draw time, and optional anchor lotteries. Console output includes the red-packet draw condition.
 - Shows the host name and ranking at the end of lottery output; Discord lottery alerts include the same information.
 - Optional Discord Webhook notifications and Windows beep alerts.
 - Includes an independent, hourly Playwright scanner for the B Zhan page Hot Rank Top 3, reported with live-room IDs.
@@ -51,6 +53,7 @@ ROOM_INTERVAL_SECONDS=3
 RISK_BACKOFF_SECONDS=60
 RED_ALERT_AVG_THRESHOLD=3
 PURPLE_ALERT_THRESHOLD=9
+PROCESS_ANCHOR_LOTTERY=0
 BEEP_ENABLED=1
 
 DISCORD_ENABLED=0
@@ -68,15 +71,17 @@ DISCORD_WEBHOOK="https://discord.com/api/webhooks/..."
 
 ## Login
 
-Run:
+The scanner requires both `acct1` and `acct2`. You may also add the optional third concurrent account, `acct3`:
 
 ```bat
-python qr_login.py
+python qr_login.py --name acct1
+python qr_login.py --name acct2
+python qr_login.py --name acct3
 ```
 
-The script generates and opens `qr_login.png`. Use the **Scan** feature in the B Zhan mobile app to scan the image and confirm the login on your phone.
+Alternatively, double-click `qr_login_acct1.bat`, `qr_login_acct2.bat`, and optionally `qr_login_acct3.bat`.
 
-On success, the login session is saved to `lotteryapi_session.json`. It contains Cookies and a refresh token—do not share or commit this file.
+Each login generates and opens `qr_login.png`. Use the **Scan** feature in the B Zhan mobile app to scan the image and confirm the login on your phone. Sessions are saved as `lotteryapi_session_acct1.json`, `lotteryapi_session_acct2.json`, and optionally `lotteryapi_session_acct3.json`; they contain Cookies and refresh tokens—do not share or commit them.
 
 ## Start scanning
 
@@ -86,9 +91,9 @@ python lotteryapi_scanner.py
 
 The scanner continuously performs the following steps:
 
-1. Refresh the ticket and WBI signing keys for the cycle.
-2. Refresh each enabled ranking source, then merge duplicate room IDs.
-3. Request each room sequentially using `ROOM_INTERVAL_SECONDS`.
+1. Build isolated, direct sessions for `acct1`, `acct2`, and optional `acct3`, then verify their device identifiers are distinct.
+2. Use `acct1` to refresh WBI signing keys and each enabled ranking source, then merge duplicate room IDs.
+3. Split rooms between the active accounts (up to `acct3`); each account requests its partition with a random interval from `ROOM_INTERVAL_SECONDS` to `ROOM_INTERVAL_SECONDS + 0.9` seconds.
 4. Refresh the enabled sources and immediately start the next cycle.
 
 There is no normal cycle delay. The scanner waits for one room interval only when every enabled source returns no rooms.
@@ -132,26 +137,30 @@ This requests one specified room and prints the API response. Use it to verify t
 | `SCAN_HOT_RANK` | Scan the Hot Rank room list: `1` enabled, `0` disabled | `1` |
 | `SCAN_POPULAR_RANKS` | Scan the configured category-rank room lists: `1` enabled, `0` disabled | `1` |
 | `HOT_RANK_LIMIT` | Maximum eligible Hot Rank rooms per cycle | `100` |
-| `ROOM_INTERVAL_SECONDS` | Delay between room requests; minimum allowed value is `3` seconds | `3` |
+| `ROOM_INTERVAL_SECONDS` | Base delay between room requests; each request uses a random value from the base to base + 0.9 seconds, with a minimum base of `3` | `3` |
 | `RISK_BACKOFF_SECONDS` | Cooldown after `-352` or an authentication failure | `60` |
 | `RED_ALERT_AVG_THRESHOLD` | Red-packet average battery-value alert threshold | `3` |
 | `PURPLE_ALERT_THRESHOLD` | Anchor-lottery total battery-value alert threshold | `9` |
+| `PROCESS_ANCHOR_LOTTERY` | Process anchor-lottery events: `1` enabled, `0` disabled | `1` |
 | `BEEP_ENABLED` | Windows sound alert switch: `1` enabled, `0` disabled | `1` |
 | `DISCORD_ENABLED` | Discord notification switch: `1` enabled, `0` disabled | `0` |
 | `DISCORD_WEBHOOK` | Discord Webhook URL | Empty |
 
 ## Risk control and troubleshooting
 
-- If the API returns `-352`, the scanner stops the current cycle and enters the configured cooldown (60 seconds by default). Do not lower the request interval or repeatedly restart the script to continue requesting.
-- The scanner attempts to fill missing `buvid3`, `buvid4`, and `b_nut` in an otherwise valid logged-in session using B Zhan's public device endpoints. It cannot replace the required `SESSDATA` and `bili_jct` login Cookies.
-- If Cookies need refresh or the login expires, run `python qr_login.py` again.
+- A single `-352` skips that room and enters the configured cooldown. Two consecutive `-352` responses stop that account's partition for the current cycle. Do not lower the request interval or repeatedly restart the script to continue requesting.
+- The scanner fills missing `buvid3`, `buvid4`, and `b_nut`, generates per-account `_uuid`, `b_lsid`, and `buvid_fp`, then refuses to scan if any active accounts share a key device identifier. It cannot replace the required `SESSDATA` and `bili_jct` login Cookies.
+- If Cookies need refresh, a login expires, or the device-ID check fails, log in to the affected account again with `python qr_login.py --name acct1`, `acct2`, or `acct3`.
 - This tool does not automate captchas, `v_voucher`, or other manual verification.
 - The login QR code must be scanned with the B Zhan mobile app. Do not open the QR URL directly in a phone browser.
 
 ## Project structure
 
 ```text
-qr_login.py             Compatibility launcher for QR login
+qr_login.py             Named-account QR login launcher
+qr_login_acct1.bat      Windows launcher for acct1 QR login
+qr_login_acct2.bat      Windows launcher for acct2 QR login
+qr_login_acct3.bat      Windows launcher for optional acct3 QR login
 config.py               config.txt parsing and default values
 auth_manager.py         QR session storage, device cookies, WBI signing, ticket refresh, and rate limiting
 b_api.py                Lottery and category-ranking API requests

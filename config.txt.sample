@@ -16,6 +16,8 @@ RISK_BACKOFF_SECONDS=60
 # Alert thresholds
 RED_ALERT_AVG_THRESHOLD=3
 PURPLE_ALERT_THRESHOLD=9
+# Process 天选 lottery events: 1 = enabled, 0 = disabled.
+PROCESS_ANCHOR_LOTTERY=1
 BEEP_ENABLED=1
 
 # Discord notifications: 1 = enabled, 0 = console output only.
