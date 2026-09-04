@@ -66,13 +66,16 @@ def get_list_config(config, key, default):
 CONFIG = load_external_config()
 CUSTOM_ROOM_IDS = get_list_config(CONFIG, "CUSTOM_ROOM_IDS", "[]")
 BLACKLIST_ROOM_IDS = get_list_config(CONFIG, "BLACKLIST_ROOM_IDS", "[]")
-CATEGORY_URLS = get_list_config(CONFIG, "CATEGORY_URLS", '["https://live.bilibili.com/p/eden/area-tags?areaId=0&parentAreaId=1", "https://live.bilibili.com/p/eden/area-tags?&areaId=190&parentAreaId=5"]')
-ROOM_COUNT = get_int_config(CONFIG, "ROOM_COUNT", 40)
+CATEGORY_URLS = get_list_config(CONFIG, "CATEGORY_URLS", '["https://live.bilibili.com/p/eden/area-tags?parentAreaId=9&areaId=0", "https://live.bilibili.com/p/eden/area-tags?parentAreaId=1&areaId=0"]')
+ROOM_COUNT = get_int_config(CONFIG, "ROOM_COUNT", 80)
 IM_SWITCH = get_int_config(CONFIG, "IM_SWITCH", 0)
 DISCORD_WEBHOOK = CONFIG.get("DISCORD_WEBHOOK", "")
 RED_ALERT_AVG_THRESHOLD = get_int_config(CONFIG, "RED_ALERT_AVG_THRESHOLD", 9)
 PURPLE_ALERT_THRESHOLD = get_int_config(CONFIG, "PURPLE_ALERT_THRESHOLD", 10000)
 BEEP_SWITCH = get_int_config(CONFIG, "BEEP_SWITCH", 1)
+
+# 仅在用户实际处理过登录窗口后，当前浏览器会话才跳过后续安全检查。
+SESSION_SECURITY_CONFIRMED = False
 
 def send_lottery_notification(
     username, room_id, gift_text, requirement_str, total_price, end_time_str
@@ -216,17 +219,41 @@ def wait_until_geetest_finished(page):
 
 
 def detect_login_window(page):
-    """Wait for the user to complete QR-code login when the login panel appears."""
+    """等待用户完成二维码登录；返回是否在本次调用中处理了登录窗口。"""
     selector = "div.login-scan-wp"
-    if page.locator(selector).count():
-        alarm()
-        send_interaction_notification("🚨 检测到登录窗口，请使用哔哩哔哩 App 扫描二维码登录。登录完成后程序将自动继续。")
+    login_window = page.locator(selector).first
+    try:
+        # 登录框可能在页面导航完成后才异步渲染，不能只做瞬时 count() 检查。
+        login_window.wait_for(state="visible", timeout=7000)
+    except Exception as e:
+        if type(e).__name__ == "TimeoutError":
+            return False
+        print(f"登录窗口检测出现异常: {e}")
+        return False
 
-        while page.locator(selector).count():
-            page.wait_for_timeout(1000)
+    alarm()
+    send_interaction_notification("🚨 检测到登录窗口，请使用哔哩哔哩 App 扫描二维码登录。登录完成后程序将自动继续。")
 
-        send_interaction_notification("✅ 二维码登录完成，继续运行。")
-    return False
+    while login_window.is_visible():
+        page.wait_for_timeout(1000)
+
+    send_interaction_notification("✅ 二维码登录完成，继续运行。")
+    return True
+
+
+def ensure_session_security(page):
+    """仅在用户完成过一次二维码登录后跳过后续安全检查。"""
+    global SESSION_SECURITY_CONFIRMED
+    if SESSION_SECURITY_CONFIRMED:
+        return
+
+    logged_in_now = detect_login_window(page)
+    if logged_in_now:
+        SESSION_SECURITY_CONFIRMED = True
+        print("已确认二维码登录完成，后续页面将跳过登录窗口和验证码检查。")
+        return
+
+    wait_until_geetest_finished(page)
 
 def detect_vip_stream(page):
     """判定大航海直播"""
@@ -239,6 +266,23 @@ def detect_vip_stream(page):
 def create_context(browser):
     print("正在拉起浏览器..")
     context = browser.new_context()
+
+    def block_nonessential_resources(route):
+        """拦截不影响页面脚本或抽奖接口的资源，缩短页面分析时间。"""
+        request = route.request
+        url = request.url.lower()
+        is_stream_or_decorative_asset = (
+            request.resource_type in {"media", "font"}
+            or re.search(r"\.(?:m4s|flv|gif|svg|webp)(?:[?#]|$)", url)
+        )
+        is_analytics_request = "data.bilibili.com" in url
+        is_manual_verification_resource = "geetest" in url or "passport" in url
+        if (is_stream_or_decorative_asset or is_analytics_request) and not is_manual_verification_resource:
+            route.abort()
+        else:
+            route.continue_()
+
+    context.route("**/*", block_nonessential_resources)
     page = context.new_page()
 
     target_trigger_url = "https://live.bilibili.com"
@@ -293,7 +337,7 @@ def get_rooms(page, url):
     rooms = []
     try:
         page.goto(url)
-        wait_until_geetest_finished(page)
+        ensure_session_security(page)
         page.locator("#room-card-list").wait_for(timeout=7000)
 
         for _ in range((ROOM_COUNT - 20) // 20):
@@ -473,23 +517,51 @@ def scan_room_by_intercept(page, room):
             except Exception:
                 pass
 
+    def process_lottery_result(result):
+        nonlocal is_success
+        code = result.get("code")
+        if code == 0:
+            data = result.get("data", {})
+
+            red_packets = data.get("popularity_red_pocket")
+            if red_packets:
+                calculate_red_packets(page, red_packets, room_id)
+
+            anchor_data = data.get("anchor")
+            if anchor_data:
+                calculate_anchor_lottery(page, anchor_data, room_id)
+        else:
+            print(f"⚠️ 房间 {room_id} 接口被拒, Code: {code}")
+            if code == -352:
+                send_interaction_notification(
+                    f"🚨 房间 {room_id} 触发 -352 频繁限制！"
+                )
+                is_success = False
+
     page.on("response", handle_response)
 
     try:
         page.goto(room)
-        # 1. 验证码
-        wait_until_geetest_finished(page)
-        # 2. 大航海
+        # 1. 每个浏览器会话只在首次页面检查登录/验证码。
+        ensure_session_security(page)
+        # 2. 每个实际直播间至少停留 3 秒，给页面与抽奖接口充分加载时间。
+        page.wait_for_timeout(3000)
+        # 3. 大航海
         if detect_vip_stream(page):
             return True
-        # 3. 弹出登录框即判定为 -352，直接返回 False
-        if detect_login_window(page):
-            return False
+
+        # 4. 优先等待抽奖接口；正常返回时无需依赖页面图标。
+        for _ in range(3):
+            if captured_json[0] is not None:
+                process_lottery_result(captured_json[0])
+                return is_success
+            page.wait_for_timeout(250)
+
         heat = page.locator(".heat-index-scroll-item")
         if heat.count():
             heat.first.click()
         page.mouse.wheel(0, 9)
-        # 4. UI 图标判断：先等 1.5 秒看看页面有没有红包/天选图标
+        # 5. 接口未及时返回时，才回退到 UI 图标判断。
         packet_btn = page.locator(packet_icon_selector)
         try:
             packet_btn.first.wait_for(state="attached", timeout=1500)
@@ -497,33 +569,16 @@ def scan_room_by_intercept(page, room):
             # 没图标说明是空房间，直接返回 True 快速扫下一个
             return True
 
-        # 5. 确认有图标后，轮询最多 2 秒等待 JSON 结果返回
+        # 6. 确认有图标后，轮询最多 2 秒等待 JSON 结果返回。
         for _ in range(4):
             if captured_json[0] is not None:
                 break
             page.wait_for_timeout(500)
 
-        # 6. 解析 JSON
+        # 7. 解析 JSON
         result = captured_json[0]
         if result:
-            code = result.get("code")  # 🎯 修复：正确提取 code
-            if code == 0:
-                data = result.get("data", {})
-
-                red_packets = data.get("popularity_red_pocket")
-                if red_packets:
-                    calculate_red_packets(page, red_packets, room_id)
-
-                anchor_data = data.get("anchor")
-                if anchor_data:
-                    calculate_anchor_lottery(page, anchor_data, room_id)
-            else:
-                print(f"⚠️ 房间 {room_id} 接口被拒, Code: {code}")
-                if code in [-352]:
-                    send_interaction_notification(
-                        f"🚨 房间 {room_id} 触发 -352 频繁限制！"
-                    )
-                    is_success = False
+            process_lottery_result(result)
 
     except Exception as e:
         if isinstance(e, TimeoutError) and "超过 5 分钟" in str(e):
@@ -568,7 +623,7 @@ def main():
                     for room in rooms:
                         scan_room_by_intercept(page, room)
 
-                idle = 300
+                idle = 60
                 print("一轮扫描结束...休息", idle)
                 time.sleep(idle) 
 

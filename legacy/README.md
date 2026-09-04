@@ -1,153 +1,87 @@
-# B Zhan Live Lottery Scanner
+# Bilibili Live Lottery Scanner (Legacy)
 
-A monitoring and alert tool for B Zhan live stream red packets and anchor lotteries, built with Python and Playwright. It now has two independent scripts: one for Hot Rank rooms and one for configured category pages. Both intercept network API responses to analyze reward value and entry requirements, sending real-time Discord notifications for high-value rewards and alerting on crashes.
+`legacy/scan.py` is an independent Playwright-based scanner for Bilibili live-room red packets and anchor lotteries. It opens one visible Chromium browser, collects rooms from configured sources, then reads the room lottery API response while the page is open.
 
----
+This is the legacy browser scanner. The repository-root `lotteryapi_scanner.py` is a separate direct-API program and has its own README and configuration.
 
-## ✨ Features
+## What it does
 
-* **Independent Scan Scripts**:
-  * **`scan_hot_rank.py`**: Scans only Hot Rank rooms.
-  * **`scan_categories.py`**: Continuously scans only rooms discovered from `CATEGORY_URLS`.
-  * **`scan_top3.py`**: At `:00:05` every hour, temporarily launches a headless browser to read and report the web Hot Rank Top 3.
-* **Network Response Interception**:
-  * Powered by Playwright Chromium automation.
-  * Registers network listeners **before** navigating to room pages (`page.goto`), ensuring capture of `getLotteryInfoWeb` API data.
-  * Checks the `getLotteryInfoWeb` response first. Normal (`code == 0`) responses are parsed immediately; non-zero or missing responses trigger GeeTest/login checks, then reload the room and request the lottery data again.
-* **Low-Bandwidth Room Loading**:
-  * Blocks Playwright `media` requests and `.m4s` stream segments, so live audio/video is not downloaded while lottery API requests remain available.
-* **Scheduled Scan Windows**:
-  * Hot Rank and Category scans run in separate processes and can run at the same time.
-  * The Hot Rank script continuously scans the first 80 rooms from the Hot Rank API, checking one room at a time.
-  * `scan_top3.py` reads the first three entries from the web Hot Rank page at `:00:05` every hour, prints each anchor's profile ID and name, and sends the same result to Discord when `IM_SWITCH=1`.
-  * The Category script has no schedule and continuously repeats category scans.
-  * Start and finish timestamps are printed for each Hot Rank and Category scan.
-* **Advanced Lottery & Red Packet Filters**:
-  * **Anchor Lotteries**: Filters out high-threshold requirements and low-time remaining draws.
-  * **Red Packets**: Calculates average battery value per award item to ensure only high-yield packets trigger notifications.
-* **GeeTest Captcha Detection & Audio Alarm**:
-  * Triggers a system beep (`winsound`) when a GeeTest captcha panel appears on screen.
-  * Pauses execution until manually solved, with a **5-minute timeout limit** to prevent infinite hanging.
-* **Discord Webhook Alerts**:
-  * **Lottery & Red Packet Alerts**: Sends formatted embed notifications for lotteries that meet specified thresholds.
-  * **Crash Alert**: Automatically catches unhandled runtime exceptions and posts the stack trace to Discord.
-  * **Interaction Alert**: Sends warnings for captcha prompts or API rate limit responses.
-  * Notifications are implemented in `discord_notifier.py` and are sent only when `IM_SWITCH=1`.
-* **External Configuration Support**:
-  * `config.py` independently reads and parses key-value configurations from `config.txt` at launch.
+- Scans rooms listed in `CUSTOM_ROOM_IDS`, the Hot Rank list, and `CATEGORY_URLS`.
+- Prints qualifying red-packet details, including the entry condition and draw time; it also processes anchor-lottery data.
+- Keeps every visited, non-blacklisted live room open for at least 3 seconds.
+- Repeats a full scan after a 60-second pause.
+- Intercepts `getLotteryInfoWeb` responses first; the visual lottery-icon check is only a fallback when the response is late.
+- Blocks streams and nonessential assets (`media`, fonts, `.m4s`, `.flv`, `.gif`, `.svg`, `.webp`, and analytics requests) to reduce page-load work. GeeTest and Bilibili passport resources remain available.
+- Can play a Windows beep and send Discord alerts when enabled.
 
----
+## Requirements
 
-## 🕒 Separate Script Schedules
+- Windows
+- Python 3.8 or newer
+- Playwright Chromium
 
-### `scan_hot_rank.py`
-
-| Time in each hour | Action |
-| --- | --- |
-| All times | Continuously fetch and scan the first 80 rooms from the Hot Rank API, one room at a time. |
-
-### `scan_top3.py`
-
-| Time in each hour | Action |
-| --- | --- |
-| Every `:00:05` | Read and report the first three entries from the web Hot Rank page. |
-
-### `scan_categories.py`
-
-Starts immediately and repeatedly scans the configured category pages. It does not wait for a scheduled time window.
-
-The web Top 3 result contains each entry's profile ID and anchor name. Discord delivery follows the `IM_SWITCH=1` setting.
-
----
-
-## ⚙️ Configuration (`config.txt`)
-
-The script parses `config.txt` located in the root directory:
-
-<table>
-  <thead>
-    <tr>
-      <th>Key</th>
-      <th>Description</th>
-      <th>Default / Example</th>
-    </tr>
-  </thead>
-  <tbody>
-     <tr>
-      <td><code>IM_SWITCH</code></td>
-      <td>Push Discord notification toggle (<code>1</code> = Enabled, <code>0</code> = Disabled)</td>
-      <td><code>0</code></td>
-    </tr>
-    <tr>
-      <td><code>BEEP_SWITCH</code></td>
-      <td>Windows Beep sound toggle (<code>1</code> = Enabled, <code>0</code> = Disabled)</td>
-      <td><code>1</code></td>
-    </tr>
-    <tr>
-      <td><code>DISCORD_WEBHOOK</code></td>
-      <td>Discord Webhook URL for alert notifications</td>
-      <td><code>"https://discord.com/api/webhooks/..."</code></td>
-    </tr>
-    <tr>
-      <td><code>ROOM_COUNT</code></td>
-      <td>Maximum number of rooms to extract per category page</td>
-      <td><code>40</code></td>
-    </tr>
-    <tr>
-      <td><code>PURPLE_ALERT_THRESHOLD</code></td>
-      <td>🟪 Alert will be sent when total prize battery value exceeds this number</td>
-      <td><code>9</code></td>
-    </tr>
-    <tr>
-      <td><code>RED_ALERT_AVG_THRESHOLD</code></td>
-      <td>🧧 Alert will be sent when <b>average battery value per prize</b> exceeds this number</td>
-      <td><code>3</code></td>
-    </tr>
-    <tr>
-      <td><code>CATEGORY_URLS</code></td>
-      <td>List of category page URLs (JSON Array format)</td>
-      <td><code>["https://live.bilibili.com/p/eden/area-tags?..."]</code></td>
-    </tr>
-    <tr>
-      <td><code>RED_SCAN_SWITCH</code></td>
-      <td>Switch for Scan 🧧</td>
-      <td><code>1</code></td>
-    </tr>
-      <tr>
-      <td><code>PURPLE_SCAN_SWITCH</code></td>
-      <td>Switch for Scan 🟪</td>
-      <td><code>1</code></td>
-    </tr>
-  </tbody>
-</table>
----
-
-## 🚀 Quick Start
-
-### 1. Requirements
-* Windows OS (required for native `winsound` audio alarms).
-* Python 3.8 or higher.
-
-### 2. One-Click Setup
-Run `install.bat` on Windows to automatically install dependencies, download the Playwright Chromium browser binary.
-
-### 3. Start a scanner
-
-Run either script in a separate terminal window:
+Install dependencies from this folder:
 
 ```bat
-python scan_hot_rank.py
-python scan_categories.py
-python scan_top3.py
+pip install -r requirements.txt
+playwright install chromium
 ```
 
-Run the scripts you need; they can run concurrently.
+`install.bat` performs the same setup on Windows.
 
-`scanner.py` contains shared scan orchestration and lottery parsing. `browser_utils.py` contains Playwright browser/session helpers; neither is an executable entry point.
+## Configuration
 
+Edit `config.txt` in this folder. Start from `config.txt.sample` if needed.
 
+| Key | Meaning |
+| --- | --- |
+| `DISCORD_WEBHOOK` | Discord Webhook URL used when notifications are enabled. Keep it private. |
+| `IM_SWITCH` | Discord notification switch: `1` on, `0` off. |
+| `BEEP_SWITCH` | Windows beep switch: `1` on, `0` off. |
+| `ROOM_COUNT` | Maximum number of rooms extracted from each configured category page. |
+| `CATEGORY_URLS` | JSON array of Bilibili category-page URLs. |
+| `CUSTOM_ROOM_IDS` | JSON array of room IDs to scan before rank and category rooms. |
+| `BLACKLIST_ROOM_IDS` | JSON array of room IDs to skip. |
+| `RED_ALERT_AVG_THRESHOLD` | Alert threshold for average red-packet battery value per winner. |
+| `PURPLE_ALERT_THRESHOLD` | Alert threshold for total anchor-lottery battery value. |
 
-## 🛡️ Exception & Risk Control Handling
+Example:
 
-* **GeeTest Captchas and Login**: When GeeTest panel or login panel appears in Liver's room, the script sounds a beep alarm and loops until you manually pass the verification.
-* **Fatal Crashes**: Any top-level unhandled exception triggers `send_crash_notification` to forward the error log directly to Discord.
+```ini
+IM_SWITCH=0
+ROOM_COUNT=80
+CUSTOM_ROOM_IDS=[]
+BLACKLIST_ROOM_IDS=[]
+RED_ALERT_AVG_THRESHOLD=4
+PURPLE_ALERT_THRESHOLD=9000
+BEEP_SWITCH=1
+```
+
+## Start
+
+From the `legacy` folder, run:
+
+```bat
+python scan.py
+```
+
+Or double-click `scan.bat`.
+
+## Login and verification
+
+The browser starts visibly. Before a QR login has been handled in the current browser session, each newly opened page checks for a login panel and GeeTest verification.
+
+If a Bilibili QR-login window appears, the scanner waits up to 7 seconds for it to render, plays an alert, and then pauses on that page until you scan and confirm the QR code in the Bilibili mobile app. Only after that window has actually appeared and been resolved does the scanner regard the session as logged in; later pages skip both the login-window and GeeTest checks.
+
+If a GeeTest panel appears before login has been confirmed, the scanner alerts you and waits for manual completion for up to five minutes. It does not solve captchas automatically.
+
+## Scan order
+
+Each cycle runs in this order:
+
+1. Rooms in `CUSTOM_ROOM_IDS`.
+2. Eligible rooms from the Hot Rank API.
+3. Rooms discovered from every URL in `CATEGORY_URLS`.
+4. Wait 60 seconds, then begin the next cycle.
+
+Rooms in `BLACKLIST_ROOM_IDS` are skipped without opening a live-room page.
