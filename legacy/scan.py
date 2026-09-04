@@ -17,16 +17,18 @@ import winsound
 from playwright.sync_api import sync_playwright
 
 
+LEGACY_DIR = os.path.dirname(os.path.realpath(__file__))
+CONFIG_PATH = os.path.join(LEGACY_DIR, "config.txt")
+
+
 def load_external_config():
-    """Load KEY=VALUE entries from config.txt"""
-    config_dir = os.path.dirname(os.path.abspath(__file__))
-    filename = "config.txt"
-    config_path = os.path.join(config_dir, filename)
-    if not os.path.isfile(config_path):
+    """Load KEY=VALUE entries from the config beside this legacy scanner."""
+    if not os.path.isfile(CONFIG_PATH):
+        print(f"未找到 legacy 配置文件，将使用默认值: {CONFIG_PATH}")
         return {}
 
     values = {}
-    with open(config_path, "r", encoding="utf-8") as config_file:
+    with open(CONFIG_PATH, "r", encoding="utf-8") as config_file:
         for raw_line in config_file:
             line = raw_line.strip()
             if not line or line.startswith("#") or "=" not in line:
@@ -36,7 +38,7 @@ def load_external_config():
             value = value.strip().strip('"').strip("'")
             if key:
                 values[key] = value
-    print(f"Loaded config file: {config_path}")
+    print(f"已加载 legacy 配置文件: {CONFIG_PATH}")
     return values
 
 
