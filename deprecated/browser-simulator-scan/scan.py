@@ -76,6 +76,7 @@ RED_ALERT_AVG_THRESHOLD = get_int_config(CONFIG, "RED_ALERT_AVG_THRESHOLD", 9)
 PURPLE_ALERT_THRESHOLD = get_int_config(CONFIG, "PURPLE_ALERT_THRESHOLD", 10000)
 BEEP_SWITCH = get_int_config(CONFIG, "BEEP_SWITCH", 1)
 
+print(ROOM_COUNT)
 # 仅在用户实际处理过登录窗口后，当前浏览器会话才跳过后续安全检查。
 SESSION_SECURITY_CONFIRMED = False
 
@@ -342,7 +343,7 @@ def get_rooms(page, url):
         ensure_session_security(page)
         page.locator("#room-card-list").wait_for(timeout=7000)
 
-        for _ in range((ROOM_COUNT - 20) // 20):
+        for _ in range((ROOM_COUNT - 20) // 10):
             page.mouse.wheel(0, 100)
             page.wait_for_timeout(1500)
 
@@ -613,10 +614,10 @@ def main():
                     scan_room_by_intercept(page, room)
 
 
-                # 2. 扫描热门排行榜列表
-                hot_rooms = get_hot_rank_rooms()
-                for room in hot_rooms:
-                    scan_room_by_intercept(page, room)
+                # # 2. 扫描热门排行榜列表
+                # hot_rooms = get_hot_rank_rooms()
+                # for room in hot_rooms:
+                #     scan_room_by_intercept(page, room)
 
 
                 # 3. 扫描分区列表

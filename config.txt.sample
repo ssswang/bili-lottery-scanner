@@ -1,24 +1,5 @@
-# Lottery API scanner configuration
-
-# Maximum eligible Hot Rank rooms scanned per list refresh.
-HOT_RANK_LIMIT=80
-
-# Scan sources: 1 = enabled, 0 = disabled.
-SCAN_HOT_RANK=1
-SCAN_POPULAR_RANKS=1
-
-# Minimum accepted value is 3 seconds. Keep this conservative to reduce -352 risk.
-ROOM_INTERVAL_SECONDS=3
-
-# Wait after -352 or an authorization failure, in seconds.
+# Wait after a ranking refresh failure or authorization failure, in seconds.
 RISK_BACKOFF_SECONDS=60
-
-# Alert thresholds
-RED_ALERT_AVG_THRESHOLD=3
-PURPLE_ALERT_THRESHOLD=9
-# Process 天选 lottery events: 1 = enabled, 0 = disabled.
-PROCESS_ANCHOR_LOTTERY=1
-BEEP_ENABLED=1
 
 # Discord notifications: 1 = enabled, 0 = console output only.
 DISCORD_ENABLED=0

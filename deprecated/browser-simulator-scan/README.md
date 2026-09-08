@@ -2,7 +2,7 @@
 
 `legacy/scan.py` is an independent Playwright-based scanner for Bilibili live-room red packets and anchor lotteries. It opens one visible Chromium browser, collects rooms from configured sources, then reads the room lottery API response while the page is open.
 
-This is the legacy browser scanner. The repository-root `lotteryapi_scanner.py` is a separate direct-API program and has its own README and configuration.
+This is the legacy browser scanner. The deprecated direct-API scanner is archived under `../deprecated/lottery_api_scanner/`.
 
 ## What it does
 

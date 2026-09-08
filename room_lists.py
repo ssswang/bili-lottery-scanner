@@ -3,13 +3,13 @@
 
 import requests
 
-from auth_manager import USER_AGENT, request_bilibili
-from b_api import request_popular_anchor_rank
+from auth_manager import USER_AGENT, request_bilibili, sign_wbi
 
 
 HOT_RANK_API_URL = "https://api.live.bilibili.com/xlive/web-interface/v1/index/getHotRankList"
+POPULAR_ANCHOR_RANK_API_URL = "https://api.live.bilibili.com/xlive/general-interface/v1/rank/getPopularAnchorRank"
 TOP_FIFTY_PARENT_AREA_IDS = {1, 5}
-TOP_FIFTY_MAX_ROOMS = 60
+TOP_FIFTY_MAX_ROOMS = 100
 POPULAR_ANCHOR_RANKS = (
     {"area_id": 207, "parent_area_id": 1, "rank_type": 3},
     {"area_id": 530, "parent_area_id": 1, "rank_type": 3},
@@ -18,6 +18,35 @@ POPULAR_ANCHOR_RANKS = (
     {"area_id": 0, "parent_area_id": 5, "rank_type": 2},  # 电台
     {"area_id": 0, "parent_area_id": 9, "rank_type": 2},  # 虚拟
 )
+
+
+def request_popular_anchor_rank(session, area_id, parent_area_id, rank_type, wbi_keys):
+    """请求分区人气榜；保留在 WS 扫描所需的榜单模块内。"""
+    img_key, sub_key = wbi_keys
+    params = sign_wbi(
+        {
+            "area_id": area_id,
+            "clientType": "2",
+            "location_code": "",
+            "parent_area_id": parent_area_id,
+            "rank_id": "0",
+            "rank_type": rank_type,
+            "uid": "0",
+            "web_location": "445.28",
+        },
+        img_key,
+        sub_key,
+    )
+    response = request_bilibili(
+        session,
+        "get",
+        POPULAR_ANCHOR_RANK_API_URL,
+        params=params,
+        headers={"Referer": "https://live.bilibili.com/"},
+        timeout=10,
+    )
+    response.raise_for_status()
+    return response.json()
 
 
 class RoomListBuilder:
