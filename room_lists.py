@@ -15,8 +15,11 @@ POPULAR_ANCHOR_RANKS = (
     {"area_id": 530, "parent_area_id": 1, "rank_type": 3},
     {"area_id": 145, "parent_area_id": 1, "rank_type": 3},
     {"area_id": 21, "parent_area_id": 1, "rank_type": 3},
+    {"area_id": 1013, "parent_area_id": 1, "rank_type": 3}, #团播
     {"area_id": 0, "parent_area_id": 5, "rank_type": 2},  # 电台
     {"area_id": 0, "parent_area_id": 9, "rank_type": 2},  # 虚拟
+    {"area_id": 0, "parent_area_id": 6, "rank_type": 2},  # 单机
+    {"area_id": 0, "parent_area_id": 2, "rank_type": 2}  # 网游
 )
 
 

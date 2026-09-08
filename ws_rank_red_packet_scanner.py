@@ -361,8 +361,7 @@ def main():
                 watcher.start()
                 time.sleep(args.connection_start_interval)
             print(
-                f"✅ 预备监视队列：{len(rooms)}/{len(all_rooms)}；"
-                f"实际连接 {connection_stats.active_count()} 个，"
+                f"✅ 实际连接 {connection_stats.active_count()} 个，"
                 f"管理房间 {len(watchers)} 个；"
                 f"{args.refresh_seconds // 60} 分钟后更新榜单。"
             )
