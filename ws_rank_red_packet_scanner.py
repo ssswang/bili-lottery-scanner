@@ -280,10 +280,6 @@ def main():
     )
     parser.add_argument("--account", default="acct1", help="使用的已登录账号名，默认 acct1")
     parser.add_argument(
-        "--max-connections", type=int, default=600,
-        help="同时监听的人气榜和分区榜去重房间数，默认 600；提高前请评估账号风控风险",
-    )
-    parser.add_argument(
         "--refresh-seconds", type=int, default=180,
         help="重新检查人气榜和分区榜并更新房间列表的间隔秒数，默认 180（3 分钟）",
     )
@@ -309,8 +305,8 @@ def main():
         help="每 60 秒最多调用 getDanmuInfo 的次数，默认 20",
     )
     args = parser.parse_args()
-    if args.max_connections < 1 or args.hot_rank_limit < 1:
-        parser.error("--max-connections 和 --hot-rank-limit 必须至少为 1")
+    if args.hot_rank_limit < 1:
+        parser.error("--hot-rank-limit 必须至少为 1")
     if args.refresh_seconds < 60:
         parser.error("--refresh-seconds 必须至少为 60")
     if (
@@ -325,7 +321,6 @@ def main():
     notifier = DiscordNotifier(args.discord_webhook)
     token_lock = threading.Lock()
     watchers = {}
-    removable_room_ids = set()
     notified_lot_ids = set()
     notified_lot_ids_lock = threading.Lock()
     connection_stats = ConnectionStats()
@@ -334,7 +329,7 @@ def main():
     )
     print(
         f"分区榜 WS 红包扫描已启动：账号 {args.account}，"
-        f"最多监听 {args.max_connections} 个房间。按 Ctrl+C 停止。"
+        "按 Ctrl+C 停止。"
     )
     try:
         while True:
@@ -345,46 +340,18 @@ def main():
                 time.sleep(RISK_BACKOFF_SECONDS)
                 continue
 
-            # 不在整个分区榜中的房间先标记为可移除，仍保留连接；只有下播或
-            # 新房间需要名额时才关闭，避免榜单短暂波动导致频繁重连。
-            ranked_room_ids = {room["room_id"] for room in all_rooms}
-            for room_id in watchers:
-                if room_id in ranked_room_ids:
-                    removable_room_ids.discard(room_id)
-                elif room_id not in removable_room_ids:
-                    removable_room_ids.add(room_id)
-
-            # 收到下播事件的房间立即释放连接名额。
+            # 收到下播事件的房间在本次刷新中移出管理列表。
             for room_id, watcher in list(watchers.items()):
                 if watcher.room_closed.is_set():
                     watchers.pop(room_id).stop()
-                    removable_room_ids.discard(room_id)
 
-            # 只把当前排名靠前的房间加入连接池；若连接池已满，优先移除
-            # 已标记的房间后再加入，未标记房间不会仅因排名变化而被关闭。
-            rooms = all_rooms[:args.max_connections]
+            # 榜单中新出现的房间加入监视；房间离开榜单不会被关闭，只有
+            # PREPARING 下播事件才会使其断开并在下一次刷新时移出管理列表。
+            rooms = all_rooms
             for room in rooms:
                 room_id = room["room_id"]
                 if room_id in watchers:
                     continue
-                if (
-                    connection_stats.active_count() >= args.max_connections
-                    and removable_room_ids
-                ):
-                    removable_room_id = next(iter(removable_room_ids))
-                    removable_room_ids.remove(removable_room_id)
-                    watcher = watchers.pop(removable_room_id, None)
-                    if watcher is not None:
-                        print(
-                            f"⏹️ 房间 {removable_room_id} 释放连接名额，"
-                            f"为房间 {room_id} 建立连接。"
-                        )
-                        watcher.stop()
-                        # stop() 会关闭 socket；等待线程完成，让实际连接计数
-                        # 先减少，再决定是否能为当前新房间建立连接。
-                        watcher.join(timeout=2)
-                if connection_stats.active_count() >= args.max_connections:
-                    break
                 watcher = RoomWatcher(
                     room, session, token_lock, wbi_keys, args.reconnect_delay,
                     args.min_average, notifier, notified_lot_ids, notified_lot_ids_lock,
@@ -396,7 +363,7 @@ def main():
             print(
                 f"✅ 预备监视队列：{len(rooms)}/{len(all_rooms)}；"
                 f"实际连接 {connection_stats.active_count()} 个，"
-                f"管理房间 {len(watchers)} 个，可移除 {len(removable_room_ids)} 个；"
+                f"管理房间 {len(watchers)} 个；"
                 f"{args.refresh_seconds // 60} 分钟后更新榜单。"
             )
             time.sleep(args.refresh_seconds)

@@ -5,8 +5,8 @@ A browser-free monitor for B Zhan live-stream red packets. It uses one official 
 ## Features
 
 - One required QR-login account: `acct1`.
-- Merges Hot Rank and category-ranking sources by room ID, then keeps up to 600 live-room WebSocket connections.
-- Refreshes the ranking list every three minutes; rooms leaving the list are marked removable and are retained until offline or their slot is needed.
+- Merges Hot Rank and category-ranking sources by room ID, then monitors every discovered room.
+- Refreshes the ranking list every three minutes; only rooms that go offline are disconnected.
 - Only evaluates `POPULARITY_RED_POCKET_START`, which includes the total value and award count needed to calculate the packet average.
 - Outputs and optionally sends Discord notifications only for packets meeting the configured average threshold.
 - Limits `getDanmuInfo` token requests to 20 per minute by default.
@@ -23,6 +23,8 @@ Install dependencies:
 ```bat
 pip install -r requirements.txt
 ```
+
+Or run `install.bat` to install the dependencies interactively.
 
 The Top 3 scanner also needs the Playwright Chromium browser:
 
@@ -75,7 +77,7 @@ python ws_rank_red_packet_scanner.py --account acct1
 
 The scanner continuously performs the following steps:
 
-1. Uses `acct1` to refresh Hot Rank and category-ranking sources, deduplicating rooms before selecting up to 600 rooms.
+1. Uses `acct1` to refresh Hot Rank and category-ranking sources, deduplicating rooms before adding newly discovered rooms to monitoring.
 2. Gets a WebSocket token for each selected room and listens only for red-packet start events.
 3. Prints a packet only when its average value is at least 10 batteries.
 4. Refreshes the ranking list every three minutes and updates the monitored rooms.
@@ -102,10 +104,10 @@ Run `ws_red_packet_watcher.bat` for an interactive Windows launcher. Install the
 
 ### WebSocket category-rank red-packet scanner
 
-`ws_rank_red_packet_scanner.py` combines Hot Rank and configured category-ranking sources with the WebSocket watcher, deduplicating rooms by ID. It only evaluates `POPULARITY_RED_POCKET_START`, because that event includes both the prize total and count needed for a package-average calculation. By default it monitors up to 600 ranked rooms and refreshes the rankings every three minutes. A room that leaves both ranking sources is marked removable, but is disconnected only after it goes offline or a new room needs its connection slot. It prints only red packets with an average value of at least 10 batteries and does not poll `getLotteryInfoWeb`.
+`ws_rank_red_packet_scanner.py` combines Hot Rank and configured category-ranking sources with the WebSocket watcher, deduplicating rooms by ID. It only evaluates `POPULARITY_RED_POCKET_START`, because that event includes both the prize total and count needed for a package-average calculation. It refreshes the rankings every three minutes and adds newly discovered rooms to monitoring. A room is disconnected only after its offline event arrives. It prints only red packets with an average value of at least 10 batteries and does not poll `getLotteryInfoWeb`.
 
 ```bat
-python ws_rank_red_packet_scanner.py --account acct1 --max-connections 600 --hot-rank-limit 100 --min-average 10
+python ws_rank_red_packet_scanner.py --account acct1 --hot-rank-limit 100 --min-average 10
 ```
 
 Use `ws_rank_red_packet_scanner.bat` for the default Windows launcher.
