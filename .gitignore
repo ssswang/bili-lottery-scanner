@@ -8,3 +8,6 @@ qr_login.png
 /proxy/__pycache__
 README.zh-CN.md
 scan.zip
+red_packet_monitor.db
+red_packet_monitor.db-shm
+red_packet_monitor.db-wal

@@ -16,7 +16,7 @@ if %errorlevel% equ 0 (
     set "PYTHON_CMD=python"
 )
 
-echo 正在安装项目依赖…
+echo 正在安装已归档 Top 3 扫描器依赖…
 call %PYTHON_CMD% -m pip install -r requirements.txt
 if errorlevel 1 (
     echo 依赖安装失败，请检查网络连接和 Python 环境后重试。
@@ -24,7 +24,13 @@ if errorlevel 1 (
     exit /b 1
 )
 
-echo.
-echo 安装完成。
-echo 启动红包监视器：ws_rank_red_packet_scanner.bat
+echo 正在安装 Playwright Chromium…
+call %PYTHON_CMD% -m playwright install chromium
+if errorlevel 1 (
+    echo Chromium 安装失败。
+    pause
+    exit /b 1
+)
+
+echo 安装完成。双击 scan_top3.bat 即可运行。
 pause

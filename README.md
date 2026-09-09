@@ -9,8 +9,8 @@ A browser-free monitor for B Zhan live-stream red packets. It uses one official 
 - Refreshes the ranking list every three minutes; only rooms that go offline are disconnected.
 - Only evaluates `POPULARITY_RED_POCKET_START`, which includes the total value and award count needed to calculate the packet average.
 - Outputs and optionally sends Discord notifications only for packets meeting the configured average threshold.
-- Limits `getDanmuInfo` token requests to 20 per minute by default.
-- Includes an independent, hourly Playwright scanner for the B Zhan page Hot Rank Top 3, reported with live-room IDs.
+- Stores qualifying packets, rooms, anchors, senders, and award details in the local SQLite database `red_packet_monitor.db`.
+- Spaces `getDanmuInfo` token requests by at least four seconds with random jitter, capped at 15 per minute by default.
 
 ## Requirements
 
@@ -25,12 +25,6 @@ pip install -r requirements.txt
 ```
 
 Or run `install.bat` to install the dependencies interactively.
-
-The Top 3 scanner also needs the Playwright Chromium browser:
-
-```bat
-playwright install chromium
-```
 
 ## Initial configuration
 
@@ -82,16 +76,6 @@ The scanner continuously performs the following steps:
 3. Prints a packet only when its average value is at least 10 batteries.
 4. Refreshes the ranking list every three minutes and updates the monitored rooms.
 
-## Hot Rank Top 3
-
-`scan_top3.py` starts a headless Chromium browser at `:00:05` of every hour, reads the first three entries from the B Zhan Hot Rank page, converts each page UID to a live-room ID through the room mapping API, and prints/sends the live-room ID and anchor name.
-
-```bat
-python scan_top3.py
-```
-
-Use `scan_top3.bat` on Windows if you prefer a double-click launcher.
-
 ## Live WebSocket red-packet watcher
 
 `ws_red_packet_watcher.py` keeps one WebSocket connection open for a selected live room and prints qualifying real-time red-packet start events. It reuses a named QR-login session and reconnects safely after a transient disconnect.
@@ -114,6 +98,7 @@ Use `ws_rank_red_packet_scanner.bat` for the default Windows launcher.
 
 Set `DISCORD_ENABLED=1` and `DISCORD_WEBHOOK` in `config.txt` to send qualifying red-packet events to Discord. Alternatively, provide a one-run webhook with `--discord-webhook "https://discord.com/api/webhooks/..."`.
 
+
 ## Risk control and troubleshooting
 
 - A `-352` response pauses the affected token request before retrying. Do not repeatedly restart the monitor while this is happening.
@@ -130,11 +115,7 @@ config.py               config.txt parsing and default values
 auth_manager.py         QR session storage, WBI signing, ticket refresh, and rate limiting
 room_lists.py           Rank-source room collection, normalization, and combined-list building
 discord_notifier.py     Discord notifications
-scan_top3.py            Hourly page Hot Rank Top 3 scanner with UID-to-room mapping (Playwright)
-scan_top3.bat           Windows launcher for scan_top3.py
 ws_rank_red_packet_scanner.py  Category-rank WebSocket red-packet monitor
 ws_rank_red_packet_scanner.bat Windows launcher for the WS monitor
 config.txt.sample       Sample configuration
 ```
-
-The previous full Playwright-based scanner remains in `legacy/`. The Top 3 scanner is the only current root-level tool that uses Playwright.

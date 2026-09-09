@@ -3,6 +3,7 @@
 
 import argparse
 import json
+import random
 import threading
 import time
 from collections import deque
@@ -13,6 +14,7 @@ import requests
 from auth_manager import USER_AGENT, build_cookie_header, get_cookie_value, get_wbi_keys
 from config import RISK_BACKOFF_SECONDS
 from discord_notifier import DiscordNotifier
+from local_database import LocalDatabase
 from room_lists import RoomListBuilder
 from ws_red_packet_watcher import (
     OP_AUTH,
@@ -80,12 +82,15 @@ class ConnectionStats:
 
 
 class DanmuInfoRateLimiter:
-    """限制 getDanmuInfo 调用，避免短时间内集中请求 WS token。"""
+    """均匀、带抖动地限制 getDanmuInfo 调用，避免短时间内集中请求。"""
 
-    def __init__(self, max_requests=20, window_seconds=60):
+    def __init__(self, max_requests=15, window_seconds=60, jitter_seconds=1.5):
         self.max_requests = max_requests
         self.window_seconds = window_seconds
+        self.jitter_seconds = jitter_seconds
+        self.minimum_interval = window_seconds / max_requests
         self._connection_times = deque()
+        self._next_allowed_time = 0.0
         self._lock = threading.Lock()
 
     def wait_for_slot(self, stop_event):
@@ -97,10 +102,19 @@ class DanmuInfoRateLimiter:
                     and now - self._connection_times[0] >= self.window_seconds
                 ):
                     self._connection_times.popleft()
-                if len(self._connection_times) < self.max_requests:
+                interval_wait = self._next_allowed_time - now
+                if len(self._connection_times) < self.max_requests and interval_wait <= 0:
                     self._connection_times.append(now)
+                    self._next_allowed_time = now + self.minimum_interval + random.uniform(
+                        0, self.jitter_seconds
+                    )
                     return True
-                wait_seconds = self.window_seconds - (now - self._connection_times[0])
+                window_wait = (
+                    self.window_seconds - (now - self._connection_times[0])
+                    if len(self._connection_times) >= self.max_requests
+                    else 0
+                )
+                wait_seconds = max(interval_wait, window_wait, 0.1)
             if stop_event.wait(max(0.1, wait_seconds)):
                 return False
         return False
@@ -111,7 +125,7 @@ class RoomWatcher(threading.Thread):
 
     def __init__(
         self, room, session, token_lock, wbi_keys, reconnect_delay, min_average,
-        notifier, notified_lot_ids, notified_lot_ids_lock, connection_stats, danmu_info_rate_limiter,
+        notifier, database, notified_lot_ids, notified_lot_ids_lock, connection_stats, danmu_info_rate_limiter,
     ):
         super().__init__(name=f"ws-room-{room['room_id']}", daemon=True)
         self.room = room
@@ -121,6 +135,7 @@ class RoomWatcher(threading.Thread):
         self.reconnect_delay = reconnect_delay
         self.min_average = min_average
         self.notifier = notifier
+        self.database = database
         self.notified_lot_ids = notified_lot_ids
         self.notified_lot_ids_lock = notified_lot_ids_lock
         self.connection_stats = connection_stats
@@ -175,7 +190,7 @@ class RoomWatcher(threading.Thread):
             total_price,
             draw_time,
             sender_name=data.get("sender_name") or data.get("uname") or "",
-            rank_info="、".join(self.room["rank_infos"]),
+            area_info="、".join(self.room.get("area_names") or []),
         )
 
     def _connect(self):
@@ -209,7 +224,7 @@ class RoomWatcher(threading.Thread):
         return socket
 
     def run(self):
-        label = f"{self.room['host_name']} | {self.room_id} | {'、'.join(self.room['rank_infos'])}"
+        label = f"{self.room['host_name']} | {self.room_id}"
         while not self.stop_event.is_set():
             # 限流许可紧邻 getDanmuInfo 请求；每次新连与重连都计入该接口配额。
             if not self.danmu_info_rate_limiter.wait_for_slot(self.stop_event):
@@ -234,7 +249,7 @@ class RoomWatcher(threading.Thread):
                     raw = message.encode("utf-8") if isinstance(message, str) else message
                     for command in parse_packets(raw):
                         name = command.get("cmd", "").split(":", 1)[0]
-                        if name == "PREPARING":
+                        if name in {"PREPARING", "CUT_OFF"}:
                             self.room_closed.set()
                             self.stop_event.set()
                             break
@@ -247,6 +262,10 @@ class RoomWatcher(threading.Thread):
                                 f"[{now}] 🧧 {RED_PACKET_COMMANDS[name]} | {label} | "
                                 f"包均: {average:.2f} 电池 | {red_packet_summary(command)}"
                             )
+                            try:
+                                self.database.save_red_packet(self.room, command, average)
+                            except Exception as error:
+                                print(f"⚠️ 本地数据库写入失败：{error}")
                             self.send_discord_notification(command)
             except RiskControlError as error:
                 self.connection_stats.record_352(attempt_number, self.room_id)
@@ -297,16 +316,32 @@ def main():
         help="临时指定 Discord Webhook；指定后自动启用通知",
     )
     parser.add_argument(
-        "--connection-start-interval", type=float, default=0.2,
-        help="新房间 WebSocket 启动之间的等待秒数，默认 0.2",
+        "--database", default="red_packet_monitor.db",
+        help="本地 SQLite 数据库文件路径，默认 red_packet_monitor.db",
     )
     parser.add_argument(
-        "--max-get-danmu-info-per-minute", type=int, default=20,
-        help="每 60 秒最多调用 getDanmuInfo 的次数，默认 20",
+        "--connection-start-interval", type=float, default=3.0,
+        help="新房间 WebSocket 启动之间的基础等待秒数，默认 3",
+    )
+    parser.add_argument(
+        "--connection-start-jitter", type=float, default=1.0,
+        help="新房间启动额外随机等待的最大秒数，默认 1",
+    )
+    parser.add_argument(
+        "--max-get-danmu-info-per-minute", type=int, default=15,
+        help="每 60 秒最多调用 getDanmuInfo 的次数，默认 15",
+    )
+    parser.add_argument(
+        "--get-danmu-info-jitter", type=float, default=1.5,
+        help="两次 getDanmuInfo 之间的额外随机等待最大秒数，默认 1.5",
     )
     args = parser.parse_args()
     if args.hot_rank_limit < 1:
         parser.error("--hot-rank-limit 必须至少为 1")
+    if args.connection_start_interval < 0 or args.connection_start_jitter < 0:
+        parser.error("连接启动等待时间不能小于 0")
+    if args.max_get_danmu_info_per_minute < 1 or args.get_danmu_info_jitter < 0:
+        parser.error("getDanmuInfo 限流参数无效")
     if args.refresh_seconds < 60:
         parser.error("--refresh-seconds 必须至少为 60")
     if (
@@ -319,13 +354,15 @@ def main():
 
     session = get_account_session(args.account)
     notifier = DiscordNotifier(args.discord_webhook)
+    database = LocalDatabase(args.database)
     token_lock = threading.Lock()
     watchers = {}
     notified_lot_ids = set()
     notified_lot_ids_lock = threading.Lock()
     connection_stats = ConnectionStats()
     danmu_info_rate_limiter = DanmuInfoRateLimiter(
-        args.max_get_danmu_info_per_minute
+        args.max_get_danmu_info_per_minute,
+        jitter_seconds=args.get_danmu_info_jitter,
     )
     print(
         f"分区榜 WS 红包扫描已启动：账号 {args.account}，"
@@ -346,7 +383,7 @@ def main():
                     watchers.pop(room_id).stop()
 
             # 榜单中新出现的房间加入监视；房间离开榜单不会被关闭，只有
-            # PREPARING 下播事件才会使其断开并在下一次刷新时移出管理列表。
+            # PREPARING 或 CUT_OFF 下播事件才会使其断开并在下一次刷新时移出管理列表。
             rooms = all_rooms
             for room in rooms:
                 room_id = room["room_id"]
@@ -354,12 +391,15 @@ def main():
                     continue
                 watcher = RoomWatcher(
                     room, session, token_lock, wbi_keys, args.reconnect_delay,
-                    args.min_average, notifier, notified_lot_ids, notified_lot_ids_lock,
+                    args.min_average, notifier, database, notified_lot_ids, notified_lot_ids_lock,
                     connection_stats, danmu_info_rate_limiter,
                 )
                 watchers[room_id] = watcher
                 watcher.start()
-                time.sleep(args.connection_start_interval)
+                time.sleep(
+                    args.connection_start_interval
+                    + random.uniform(0, args.connection_start_jitter)
+                )
             print(
                 f"✅ 实际连接 {connection_stats.active_count()} 个，"
                 f"管理房间 {len(watchers)} 个；"
@@ -373,6 +413,7 @@ def main():
             watcher.stop()
         for watcher in watchers.values():
             watcher.join(timeout=3)
+        database.close()
 
 
 if __name__ == "__main__":

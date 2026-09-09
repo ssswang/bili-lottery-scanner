@@ -1,5 +1,4 @@
 requests
 qrcode[pil]
-playwright
 websocket-client
 brotli

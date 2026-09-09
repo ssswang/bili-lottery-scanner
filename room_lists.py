@@ -18,8 +18,8 @@ POPULAR_ANCHOR_RANKS = (
     {"area_id": 1013, "parent_area_id": 1, "rank_type": 3}, #团播
     {"area_id": 0, "parent_area_id": 5, "rank_type": 2},  # 电台
     {"area_id": 0, "parent_area_id": 9, "rank_type": 2},  # 虚拟
-    {"area_id": 0, "parent_area_id": 6, "rank_type": 2},  # 单机
-    {"area_id": 0, "parent_area_id": 2, "rank_type": 2}  # 网游
+    # {"area_id": 0, "parent_area_id": 6, "rank_type": 2},  # 单机
+    # {"area_id": 0, "parent_area_id": 2, "rank_type": 2}  # 网游
 )
 
 
@@ -97,6 +97,8 @@ class RoomListBuilder:
                     {
                         "room_id": str(room_id),
                         "host_name": item.get("uname") or "未知主播",
+                        "anchor_id": self.get_anchor_id(item),
+                        "area_names": self.get_area_names(item),
                         "rank_infos": [self.format_rank_info("人气榜", item.get("rank"))],
                     }
                 )
@@ -143,6 +145,8 @@ class RoomListBuilder:
                     {
                         "room_id": str(room_id),
                         "host_name": host_name,
+                        "anchor_id": self.get_anchor_id(item),
+                        "area_names": self.get_area_names(item),
                         "rank_infos": [
                             self.format_rank_info("分区榜", item.get("rank"))
                         ],
@@ -164,6 +168,35 @@ class RoomListBuilder:
         )
 
     @staticmethod
+    def get_area_names(item):
+        """从不同榜单接口的房间数据中提取可展示的直播分区。"""
+        parent_name = item.get("area_v2_parent_name") or item.get("parent_area_name")
+        area_name = (
+            item.get("area_v2_name")
+            or item.get("area_name")
+            or item.get("area_name_v2")
+        )
+        if parent_name and area_name and parent_name != area_name:
+            return [f"{parent_name} / {area_name}"]
+        return [area_name or parent_name] if area_name or parent_name else []
+
+    @staticmethod
+    def get_anchor_id(item):
+        """兼容不同榜单接口的字段，提取主播 UID。"""
+        base_info = (item.get("uinfo") or {}).get("base") or {}
+        for value in (
+            item.get("uid"),
+            item.get("anchor_uid"),
+            item.get("user_id"),
+            base_info.get("uid"),
+            base_info.get("mid"),
+            (item.get("uinfo") or {}).get("uid"),
+        ):
+            if value is not None and str(value):
+                return str(value)
+        return None
+
+    @staticmethod
     def merge_unique_rooms(*room_groups):
         """按房间号合并多个榜单，并保留该房间的全部榜单排名。"""
         rooms = []
@@ -182,7 +215,12 @@ class RoomListBuilder:
                     and room["host_name"] != "未知主播"
                 ):
                     existing_room["host_name"] = room["host_name"]
+                if not existing_room.get("anchor_id") and room.get("anchor_id"):
+                    existing_room["anchor_id"] = room["anchor_id"]
                 for rank_info in room["rank_infos"]:
                     if rank_info not in existing_room["rank_infos"]:
                         existing_room["rank_infos"].append(rank_info)
+                for area_name in room.get("area_names", []):
+                    if area_name and area_name not in existing_room.setdefault("area_names", []):
+                        existing_room["area_names"].append(area_name)
         return rooms

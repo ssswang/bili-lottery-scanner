@@ -1,9 +1,16 @@
 # -*- coding: utf-8 -*-
 """每小时读取一次 B Zhan 页面人气榜 Top 3。"""
 
+import sys
 import traceback
 from datetime import datetime, timedelta
+from pathlib import Path
 import time
+
+# 归档脚本仍复用项目根目录的 Discord 配置与通知器。
+PROJECT_ROOT = Path(__file__).resolve().parents[2]
+if str(PROJECT_ROOT) not in sys.path:
+    sys.path.insert(0, str(PROJECT_ROOT))
 
 from playwright.sync_api import Error as PlaywrightError
 from playwright.sync_api import TimeoutError as PlaywrightTimeoutError
