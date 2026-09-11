@@ -40,3 +40,14 @@ RISK_BACKOFF_SECONDS = get_int(CONFIG, "RISK_BACKOFF_SECONDS", 60, minimum=60)
 # Discord 配置
 DISCORD_ENABLED = get_int(CONFIG, "DISCORD_ENABLED", 0) == 1
 DISCORD_WEBHOOK = CONFIG.get("DISCORD_WEBHOOK", "")
+
+# 不建立 WebSocket 监视的房间 ID；config.txt 可用逗号分隔的 ROOM_BLACKLIST 追加。
+DEFAULT_ROOM_BLACKLIST = {"2233", "25383355"}
+ROOM_BLACKLIST = frozenset(
+    DEFAULT_ROOM_BLACKLIST
+    | {
+        room_id.strip()
+        for room_id in CONFIG.get("ROOM_BLACKLIST", "").split(",")
+        if room_id.strip()
+    }
+)

@@ -4,3 +4,6 @@ RISK_BACKOFF_SECONDS=60
 # Discord notifications: 1 = enabled, 0 = console output only.
 DISCORD_ENABLED=0
 DISCORD_WEBHOOK="https://discord.com/api/webhooks/..."
+
+# Additional room IDs that should never be monitored, separated by commas.
+ROOM_BLACKLIST=""

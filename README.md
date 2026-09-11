@@ -7,10 +7,13 @@ A browser-free monitor for B Zhan live-stream red packets. It uses one official 
 - One required QR-login account: `acct1`.
 - Merges Hot Rank and category-ranking sources by room ID, then monitors every discovered room.
 - Refreshes the ranking list every three minutes; only rooms that go offline are disconnected.
+- Keeps at most 1000 live WebSocket connections; a newly discovered room replaces the longest-connected room when full.
+- Disconnects rooms when their WebSocket reports more than 500 high-energy users or 10,000 cumulative viewers.
 - Only evaluates `POPULARITY_RED_POCKET_START`, which includes the total value and award count needed to calculate the packet average.
 - Outputs and optionally sends Discord notifications only for packets meeting the configured average threshold.
-- Stores qualifying packets, rooms, anchors, senders, and award details in the local SQLite database `red_packet_monitor.db`.
-- Spaces `getDanmuInfo` token requests by at least four seconds with random jitter, capped at 15 per minute by default.
+- Stores qualifying packets, rooms, anchors, and senders in the local SQLite database `red_packet_monitor.db`; packets default to `is_battery_lottery = 1`.
+- Persistently caches per-account, per-room WebSocket tokens and host lists; cache-hit reconnects do not call `getDanmuInfo`, while rejected or repeatedly unconfirmed tokens are refreshed.
+- Spaces uncached `getDanmuInfo` token requests by at least four seconds with random jitter, capped at 15 per minute by default.
 
 ## Requirements
 

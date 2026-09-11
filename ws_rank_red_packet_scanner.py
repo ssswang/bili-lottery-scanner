@@ -12,7 +12,7 @@ from datetime import datetime
 import requests
 
 from auth_manager import USER_AGENT, build_cookie_header, get_cookie_value, get_wbi_keys
-from config import RISK_BACKOFF_SECONDS
+from config import RISK_BACKOFF_SECONDS, ROOM_BLACKLIST
 from discord_notifier import DiscordNotifier
 from local_database import LocalDatabase
 from room_lists import RoomListBuilder
@@ -22,13 +22,21 @@ from ws_red_packet_watcher import (
     RED_PACKET_COMMANDS,
     RiskControlError,
     build_packet,
+    build_wss_url,
     get_account_session,
     get_danmu_info,
+    parse_auth_reply,
     parse_packets,
     red_packet_average,
     red_packet_summary,
     websocket,
 )
+
+
+MAX_HIGH_ENERGY_USERS = 500
+MAX_CUMULATIVE_WATCHERS = 10_000
+DEFAULT_MAX_ACTIVE_ROOMS = 1000
+MAX_RISK_352_BEFORE_DANMU_INFO_STOP = 100
 
 
 class ConnectionStats:
@@ -41,6 +49,8 @@ class ConnectionStats:
         self.active = 0
         self.risk_352 = 0
         self.failures = 0
+        self.danmu_info_requests = 0
+        self.danmu_info_blocked = False
 
     def attempt(self, room_id):
         with self._lock:
@@ -50,7 +60,8 @@ class ConnectionStats:
             if attempt_number == 1 or attempt_number % 10 == 0:
                 print(
                     f"🔢 WS 连接计数：尝试 {attempt_number} | 成功 {self.connected} | "
-                    f"活跃 {self.active} | -352 {self.risk_352}"
+                    f"活跃 {self.active} | getDanmuInfo {self.danmu_info_requests} | "
+                    f"-352 {self.risk_352}"
                 )
             return attempt_number
 
@@ -68,17 +79,62 @@ class ConnectionStats:
         with self._lock:
             return self.active
 
+    def record_danmu_info_request(self):
+        """仅在真正发出 getDanmuInfo HTTP 请求时计数，缓存命中不计。"""
+        with self._lock:
+            self.danmu_info_requests += 1
+
+    def danmu_info_request_count(self):
+        with self._lock:
+            return self.danmu_info_requests
+
+    def is_danmu_info_blocked(self):
+        """达到 -352 阈值后，禁止新的 getDanmuInfo 请求但不影响缓存重连。"""
+        with self._lock:
+            return self.danmu_info_blocked
+
     def record_352(self, attempt_number, room_id):
         with self._lock:
             self.risk_352 += 1
             print(
                 f"⚠️ -352 连接计数：第 {attempt_number} 次请求 | 房间 {room_id} | "
-                f"成功 {self.connected} | 活跃 {self.active} | 累计 -352 {self.risk_352}"
+                f"成功 {self.connected} | 活跃 {self.active} | "
+                f"getDanmuInfo {self.danmu_info_requests} | 累计 -352 {self.risk_352}"
             )
+            if (
+                self.risk_352 >= MAX_RISK_352_BEFORE_DANMU_INFO_STOP
+                and not self.danmu_info_blocked
+            ):
+                self.danmu_info_blocked = True
+                print(
+                    f"⛔ 累计 -352 已达 {MAX_RISK_352_BEFORE_DANMU_INFO_STOP} 次："
+                    "停止新的 getDanmuInfo 请求；已缓存的房间仍可重连。"
+                )
 
     def record_failure(self):
         with self._lock:
             self.failures += 1
+
+
+class ConnectionCapacity:
+    """限制实际 WebSocket 连接数，连接建立和重连都必须先取得一个名额。"""
+
+    def __init__(self, maximum):
+        self.maximum = maximum
+        self._slots = threading.BoundedSemaphore(maximum)
+
+    def acquire(self, stop_event):
+        while not stop_event.is_set():
+            if self._slots.acquire(timeout=0.5):
+                return True
+        return False
+
+    def release(self):
+        self._slots.release()
+
+
+class TokenRejectedError(RuntimeError):
+    """服务端明确拒绝或持续无法确认缓存 token 的鉴权。"""
 
 
 class DanmuInfoRateLimiter:
@@ -120,15 +176,32 @@ class DanmuInfoRateLimiter:
         return False
 
 
+def exceeds_room_activity_limit(command_name, command):
+    """判断 WS 推送的高能用户或累计看过人数是否超过连接保留阈值。"""
+    data = command.get("data") or {}
+    if command_name == "ONLINE_RANK_COUNT":
+        value, limit = data.get("count"), MAX_HIGH_ENERGY_USERS
+    elif command_name == "WATCHED_CHANGE":
+        value, limit = data.get("num"), MAX_CUMULATIVE_WATCHERS
+    else:
+        return False
+    try:
+        return int(value) > limit
+    except (TypeError, ValueError):
+        return False
+
+
 class RoomWatcher(threading.Thread):
-    """一个入选房间一个线程；所有 token 请求由外部锁串行化。"""
+    """一个入选房间一个线程；优先复用数据库内长期保存的 token。"""
 
     def __init__(
-        self, room, session, token_lock, wbi_keys, reconnect_delay, min_average,
-        notifier, database, notified_lot_ids, notified_lot_ids_lock, connection_stats, danmu_info_rate_limiter,
+        self, room, account_name, session, token_lock, wbi_keys, reconnect_delay, min_average,
+        notifier, database, notified_lot_ids, notified_lot_ids_lock, connection_stats,
+        danmu_info_rate_limiter, connection_capacity,
     ):
         super().__init__(name=f"ws-room-{room['room_id']}", daemon=True)
         self.room = room
+        self.account_name = account_name
         self.session = session
         self.token_lock = token_lock
         self.wbi_keys = wbi_keys
@@ -140,9 +213,16 @@ class RoomWatcher(threading.Thread):
         self.notified_lot_ids_lock = notified_lot_ids_lock
         self.connection_stats = connection_stats
         self.danmu_info_rate_limiter = danmu_info_rate_limiter
+        self.connection_capacity = connection_capacity
         self.room_closed = threading.Event()
         self.stop_event = threading.Event()
         self._socket = None
+        self._host_index = 0
+        self._connection_state_lock = threading.Lock()
+        self._connected_since = None
+        self._used_cached_auth = False
+        self._auth_reply_received = False
+        self._cached_auth_failures = 0
 
     @property
     def room_id(self):
@@ -152,6 +232,19 @@ class RoomWatcher(threading.Thread):
         self.stop_event.set()
         if self._socket is not None:
             self._socket.close()
+
+    def mark_connected(self):
+        with self._connection_state_lock:
+            self._connected_since = time.monotonic()
+
+    def mark_disconnected(self):
+        with self._connection_state_lock:
+            self._connected_since = None
+
+    def connected_since(self):
+        """返回当前连接的开始时间；未连接时返回 None。"""
+        with self._connection_state_lock:
+            return self._connected_since
 
     def send_discord_notification(self, command):
         """同一红包只通知一次，避免 WebSocket 重连时重复推送。"""
@@ -193,12 +286,40 @@ class RoomWatcher(threading.Thread):
             area_info="、".join(self.room.get("area_names") or []),
         )
 
-    def _connect(self):
-        # getDanmuInfo 是受风控保护的接口，多个房间启动时不能并发突发请求。
+    def _get_auth_info(self):
+        """优先复用数据库 token；未命中或失效后才占用接口限流额度。"""
+        cached = self.database.load_ws_auth_cache(self.account_name, self.room_id)
+        if cached:
+            self._used_cached_auth = True
+            return cached
+        self._used_cached_auth = False
+        if self.connection_stats.is_danmu_info_blocked():
+            return None
+        if not self.danmu_info_rate_limiter.wait_for_slot(self.stop_event):
+            return None
+        # 排队等待限流期间，其他执行路径可能已经写入缓存，因此再次确认。
         with self.token_lock:
+            cached = self.database.load_ws_auth_cache(self.account_name, self.room_id)
+            if cached:
+                self._used_cached_auth = True
+                return cached
+            if self.connection_stats.is_danmu_info_blocked():
+                return None
+            self.connection_stats.record_danmu_info_request()
             token, hosts = get_danmu_info(self.session, self.room_id, self.wbi_keys)
-        host = hosts[0]
-        url = f"wss://{host['host']}:{host['wss_port']}/sub"
+            self.database.save_ws_auth_cache(self.account_name, self.room_id, token, hosts)
+            self._used_cached_auth = False
+            return token, hosts
+
+    def invalidate_cached_auth(self):
+        self.database.delete_ws_auth_cache(self.account_name, self.room_id)
+        self._cached_auth_failures = 0
+
+    def _connect(self, auth_info):
+        token, hosts = auth_info
+        host = hosts[self._host_index % len(hosts)]
+        self._host_index += 1
+        url = build_wss_url(host)
         socket = websocket.create_connection(
             url,
             cookie=build_cookie_header(self.session),
@@ -226,15 +347,21 @@ class RoomWatcher(threading.Thread):
     def run(self):
         label = f"{self.room['host_name']} | {self.room_id}"
         while not self.stop_event.is_set():
-            # 限流许可紧邻 getDanmuInfo 请求；每次新连与重连都计入该接口配额。
-            if not self.danmu_info_rate_limiter.wait_for_slot(self.stop_event):
-                return
             counted_open = False
+            slot_acquired = False
             attempt_number = self.connection_stats.attempt(self.room_id)
             try:
-                self._socket = self._connect()
+                auth_info = self._get_auth_info()
+                if auth_info is None:
+                    return
+                if not self.connection_capacity.acquire(self.stop_event):
+                    return
+                slot_acquired = True
+                self._auth_reply_received = False
+                self._socket = self._connect(auth_info)
                 self.connection_stats.connection_opened()
                 counted_open = True
+                self.mark_connected()
                 next_heartbeat = time.monotonic() + 30
                 while not self.stop_event.is_set():
                     self._socket.settimeout(max(1, next_heartbeat - time.monotonic()))
@@ -247,9 +374,22 @@ class RoomWatcher(threading.Thread):
                     if not message:
                         raise websocket.WebSocketConnectionClosedException("服务器关闭连接")
                     raw = message.encode("utf-8") if isinstance(message, str) else message
+                    auth_reply = parse_auth_reply(raw)
+                    if auth_reply is not None:
+                        self._auth_reply_received = True
+                        if auth_reply.get("code") != 0:
+                            message = auth_reply.get("message") or auth_reply.get("msg") or "未提供原因"
+                            raise TokenRejectedError(
+                                f"WebSocket 鉴权被拒绝：code={auth_reply.get('code')}，{message}"
+                            )
+                        self._cached_auth_failures = 0
+                        continue
                     for command in parse_packets(raw):
                         name = command.get("cmd", "").split(":", 1)[0]
-                        if name in {"PREPARING", "CUT_OFF"}:
+                        if (
+                            name in {"PREPARING", "CUT_OFF"}
+                            or exceeds_room_activity_limit(name, command)
+                        ):
                             self.room_closed.set()
                             self.stop_event.set()
                             break
@@ -267,21 +407,33 @@ class RoomWatcher(threading.Thread):
                             except Exception as error:
                                 print(f"⚠️ 本地数据库写入失败：{error}")
                             self.send_discord_notification(command)
+            except TokenRejectedError as error:
+                self.invalidate_cached_auth()
+                if not self.stop_event.is_set():
+                    print(f"⚠️ {label}：{error}；将重新获取鉴权信息。")
+                    self.stop_event.wait(self.reconnect_delay)
             except RiskControlError as error:
                 self.connection_stats.record_352(attempt_number, self.room_id)
                 print(f"⚠️ {label}：{error}")
                 self.stop_event.wait(max(60, self.reconnect_delay))
             except (requests.RequestException, RuntimeError, OSError, websocket.WebSocketException) as error:
                 self.connection_stats.record_failure()
+                if self._used_cached_auth and not self._auth_reply_received:
+                    self._cached_auth_failures += 1
+                    if self._cached_auth_failures >= 2:
+                        self.invalidate_cached_auth()
                 if not self.stop_event.is_set():
                     print(f"⚠️ {label}：{error}；{self.reconnect_delay} 秒后重连。")
                     self.stop_event.wait(self.reconnect_delay)
             finally:
                 if counted_open:
                     self.connection_stats.connection_closed()
+                    self.mark_disconnected()
                 if self._socket is not None:
                     self._socket.close()
                     self._socket = None
+                if slot_acquired:
+                    self.connection_capacity.release()
 
 
 def build_rank_rooms(session, hot_rank_limit):
@@ -290,7 +442,18 @@ def build_rank_rooms(session, hot_rank_limit):
     rooms = RoomListBuilder(session, wbi_keys, hot_rank_limit=hot_rank_limit).build(
         include_hot_rank=True, include_popular_ranks=True
     )
+    rooms = [room for room in rooms if room["room_id"] not in ROOM_BLACKLIST]
     return rooms, wbi_keys
+
+
+def oldest_connected_watcher(watchers):
+    """选出本轮最早成功建立 WS 连接、且仍在线的房间。"""
+    candidates = []
+    for watcher in watchers.values():
+        connected_since = watcher.connected_since()
+        if connected_since is not None:
+            candidates.append((connected_since, watcher.room_id, watcher))
+    return min(candidates, default=None, key=lambda item: item[:2])
 
 
 def main():
@@ -335,13 +498,21 @@ def main():
         "--get-danmu-info-jitter", type=float, default=1.5,
         help="两次 getDanmuInfo 之间的额外随机等待最大秒数，默认 1.5",
     )
+    parser.add_argument(
+        "--max-active-rooms", type=int, default=DEFAULT_MAX_ACTIVE_ROOMS,
+        help="实际同时保持的 WebSocket 连接上限，默认 1000",
+    )
     args = parser.parse_args()
     if args.hot_rank_limit < 1:
         parser.error("--hot-rank-limit 必须至少为 1")
     if args.connection_start_interval < 0 or args.connection_start_jitter < 0:
         parser.error("连接启动等待时间不能小于 0")
-    if args.max_get_danmu_info_per_minute < 1 or args.get_danmu_info_jitter < 0:
-        parser.error("getDanmuInfo 限流参数无效")
+    if (
+        args.max_get_danmu_info_per_minute < 1
+        or args.get_danmu_info_jitter < 0
+        or args.max_active_rooms < 1
+    ):
+        parser.error("getDanmuInfo 限流或活跃连接参数无效")
     if args.refresh_seconds < 60:
         parser.error("--refresh-seconds 必须至少为 60")
     if (
@@ -364,6 +535,7 @@ def main():
         args.max_get_danmu_info_per_minute,
         jitter_seconds=args.get_danmu_info_jitter,
     )
+    connection_capacity = ConnectionCapacity(args.max_active_rooms)
     print(
         f"分区榜 WS 红包扫描已启动：账号 {args.account}，"
         "按 Ctrl+C 停止。"
@@ -383,16 +555,34 @@ def main():
                     watchers.pop(room_id).stop()
 
             # 榜单中新出现的房间加入监视；房间离开榜单不会被关闭，只有
-            # PREPARING 或 CUT_OFF 下播事件才会使其断开并在下一次刷新时移出管理列表。
+            # 下播、切断，或触发人数阈值的房间会在下一次刷新时移出管理列表。
             rooms = all_rooms
             for room in rooms:
                 room_id = room["room_id"]
                 if room_id in watchers:
                     continue
+                # 使用真实已建立的连接数判断是否满额。名额满时只替换一间，
+                # 新房间会等待旧连接释放槽位，因此任何时刻均不会超过上限。
+                if connection_stats.active_count() >= args.max_active_rooms:
+                    oldest = oldest_connected_watcher(watchers)
+                    if oldest is None:
+                        # 连接正在建立、尚无可替换对象时，不累积等待中的房间线程。
+                        break
+                    _, old_room_id, old_watcher = oldest
+                    watchers.pop(old_room_id, None)
+                    old_watcher.stop()
+                    old_watcher.join(timeout=3)
+                    if old_watcher.is_alive():
+                        # 尚未真正释放连接时，留到下一轮刷新再加入，避免一口气关闭多间。
+                        break
+                    print(
+                        f"🔄 活跃连接已达 {args.max_active_rooms}："
+                        f"关闭连接最久的房间 {old_room_id}，加入房间 {room_id}。"
+                    )
                 watcher = RoomWatcher(
-                    room, session, token_lock, wbi_keys, args.reconnect_delay,
+                    room, args.account, session, token_lock, wbi_keys, args.reconnect_delay,
                     args.min_average, notifier, database, notified_lot_ids, notified_lot_ids_lock,
-                    connection_stats, danmu_info_rate_limiter,
+                    connection_stats, danmu_info_rate_limiter, connection_capacity,
                 )
                 watchers[room_id] = watcher
                 watcher.start()
@@ -400,9 +590,16 @@ def main():
                     args.connection_start_interval
                     + random.uniform(0, args.connection_start_jitter)
                 )
+            danmu_info_status = (
+                "新 getDanmuInfo 请求已停止；"
+                if connection_stats.is_danmu_info_blocked()
+                else ""
+            )
             print(
                 f"✅ 实际连接 {connection_stats.active_count()} 个，"
-                f"管理房间 {len(watchers)} 个；"
+                f"管理房间 {len(watchers)} 个，"
+                f"getDanmuInfo 累计 {connection_stats.danmu_info_request_count()} 次；"
+                f"{danmu_info_status}"
                 f"{args.refresh_seconds // 60} 分钟后更新榜单。"
             )
             time.sleep(args.refresh_seconds)

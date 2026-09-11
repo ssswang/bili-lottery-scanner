@@ -41,6 +41,7 @@ HEADER_LENGTH = 16
 OP_HEARTBEAT = 2
 OP_MESSAGE = 5
 OP_AUTH = 7
+OP_AUTH_REPLY = 8
 
 RED_PACKET_COMMANDS = {
     "POPULARITY_RED_POCKET_START": "红包开始",
@@ -56,6 +57,15 @@ def build_packet(body, operation, protover=1):
     if isinstance(body, str):
         body = body.encode("utf-8")
     return struct.pack("!IHHII", HEADER_LENGTH + len(body), HEADER_LENGTH, protover, operation, 1) + body
+
+
+def build_wss_url(host):
+    """使用 getDanmuInfo 返回的加密 wss_port 构造连接地址。"""
+    hostname = host.get("host") if isinstance(host, dict) else None
+    port = host.get("wss_port") if isinstance(host, dict) else None
+    if not hostname or not port:
+        raise RuntimeError("getDanmuInfo 未返回可用的加密 wss_port")
+    return f"wss://{hostname}:{port}/sub"
 
 
 def parse_packets(buffer):
@@ -90,6 +100,27 @@ def parse_packets(buffer):
                 yield json.loads(body.decode("utf-8"))
             except (UnicodeDecodeError, json.JSONDecodeError):
                 continue
+
+
+def parse_auth_reply(buffer):
+    """从单个 WS 帧中读取服务端 OP_AUTH_REPLY；非鉴权帧返回 None。"""
+    offset = 0
+    while offset + HEADER_LENGTH <= len(buffer):
+        packet_length, header_length, _, operation, _ = struct.unpack_from(
+            "!IHHII", buffer, offset
+        )
+        if packet_length < header_length or offset + packet_length > len(buffer):
+            return None
+        body = buffer[offset + header_length : offset + packet_length]
+        offset += packet_length
+        if operation != OP_AUTH_REPLY:
+            continue
+        try:
+            reply = json.loads(body.decode("utf-8"))
+        except (UnicodeDecodeError, json.JSONDecodeError):
+            return {"code": None, "message": "无法解析服务端鉴权回复"}
+        return reply if isinstance(reply, dict) else {"code": None, "message": "鉴权回复格式无效"}
+    return None
 
 
 def get_account_session(account_name):
@@ -232,7 +263,7 @@ def watch(room_id, account_name, reconnect_delay):
         try:
             token, hosts = get_danmu_info(session, room_id)
             host = hosts[0]
-            url = f"wss://{host['host']}:{host['wss_port']}/sub"
+            url = build_wss_url(host)
             ws = websocket.create_connection(
                 url,
                 cookie=build_cookie_header(session),
