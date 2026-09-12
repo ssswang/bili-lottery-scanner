@@ -1,6 +1,8 @@
 # -*- coding: utf-8 -*-
 """收集各直播榜单房间，并生成去重后的综合房间列表。"""
 
+import time
+
 import requests
 
 from auth_manager import USER_AGENT, request_bilibili, sign_wbi
@@ -21,6 +23,11 @@ POPULAR_ANCHOR_RANKS = (
     # {"area_id": 0, "parent_area_id": 6, "rank_type": 2},  # 单机
     # {"area_id": 0, "parent_area_id": 2, "rank_type": 2}  # 网游
 )
+
+
+def log(message):
+    """输出带本地时间戳的榜单状态。"""
+    print(f"[{time.strftime('%Y-%m-%d %H:%M:%S')}] {message}")
 
 
 def request_popular_anchor_rank(session, area_id, parent_area_id, rank_type, wbi_keys):
@@ -104,7 +111,7 @@ class RoomListBuilder:
                 )
             if len(rooms) >= self.hot_rank_limit:
                 break
-        print(f"成功获取人气榜房间数量：{len(rooms)}")
+        log(f"📋 人气榜直播间：{len(rooms)}")
         return rooms
 
     def get_popular_anchor_rank_rooms(self):
@@ -117,10 +124,10 @@ class RoomListBuilder:
                     self.session, wbi_keys=self.wbi_keys, **rank_params
                 )
             except requests.RequestException as error:
-                print(f"⚠️ 获取分区人气榜失败：{rank_params}：{error}")
+                log(f"⚠️ 获取分区人气榜失败：{rank_params}：{error}")
                 continue
             if payload.get("code") != 0:
-                print(
+                log(
                     "⚠️ 获取分区人气榜失败："
                     f"{rank_params}：{payload.get('code')} {payload.get('message')}"
                 )
@@ -152,7 +159,7 @@ class RoomListBuilder:
                         ],
                     }
                 )
-        print(
+        log(
             "📋 分区榜直播间："
             f"{len(rooms)}（已获取 {successful_rank_count}/{len(POPULAR_ANCHOR_RANKS)} 个分区）"
         )
