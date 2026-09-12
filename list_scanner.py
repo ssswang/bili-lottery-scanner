@@ -555,8 +555,8 @@ def main():
         help="本地 SQLite 数据库文件路径，默认 red_packet_monitor.db",
     )
     parser.add_argument(
-        "--max-get-danmu-info-per-minute", type=int, default=10,
-        help="每 60 秒最多调用 getDanmuInfo 的次数，默认 10",
+        "--max-get-danmu-info-per-minute", type=int, default=8,
+        help="每 60 秒最多调用 getDanmuInfo 的次数，默认 8",
     )
     parser.add_argument(
         "--get-danmu-info-jitter", type=float, default=1.5,

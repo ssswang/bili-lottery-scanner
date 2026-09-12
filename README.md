@@ -13,7 +13,7 @@ A browser-free monitor for B Zhan live-stream red packets. It uses one official 
 - Outputs and optionally sends Discord notifications only for packets meeting the configured average threshold.
 - Stores qualifying packets, rooms, anchors, and senders in the local SQLite database `red_packet_monitor.db`; packets default to `is_battery_lottery = 1`.
 - Persistently caches per-account, per-room WebSocket tokens and host lists; cache-hit reconnects do not call `getDanmuInfo`, while rejected or repeatedly unconfirmed tokens are refreshed.
-- Spaces uncached `getDanmuInfo` token requests by at least six seconds with random jitter, capped at 10 per minute by default.
+- Spaces uncached `getDanmuInfo` token requests by at least 7.5 seconds with random jitter, capped at 8 per minute by default.
 
 ## Requirements
 
