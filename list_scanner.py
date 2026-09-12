@@ -12,15 +12,24 @@ from datetime import datetime
 import requests
 
 from auth_manager import USER_AGENT, build_cookie_header, get_cookie_value, get_wbi_keys
-from config import RISK_BACKOFF_SECONDS, ROOM_BLACKLIST
+from config import (
+    ANCHOR_LOTTERY_MIN_AVERAGE,
+    PROCESS_ANCHOR_LOTTERY,
+    RED_PACKET_MIN_AVERAGE,
+    RISK_BACKOFF_SECONDS,
+    ROOM_BLACKLIST,
+)
 from discord_notifier import DiscordNotifier
 from local_database import LocalDatabase
 from room_lists import RoomListBuilder
-from ws_red_packet_watcher import (
+from room_watcher import (
     OP_AUTH,
     OP_HEARTBEAT,
+    ANCHOR_LOTTERY_COMMANDS,
     RED_PACKET_COMMANDS,
     RiskControlError,
+    anchor_lottery_details,
+    anchor_lottery_summary,
     build_packet,
     build_wss_url,
     get_account_session,
@@ -35,7 +44,7 @@ from ws_red_packet_watcher import (
 
 MAX_HIGH_ENERGY_USERS = 500
 MAX_CUMULATIVE_WATCHERS = 10_000
-DEFAULT_MAX_ACTIVE_ROOMS = 1000
+DEFAULT_MAX_ACTIVE_ROOMS = 2000
 MAX_RISK_352_BEFORE_DANMU_INFO_STOP = 100
 
 
@@ -55,20 +64,20 @@ class ConnectionStats:
     def attempt(self, room_id):
         with self._lock:
             self.attempts += 1
-            attempt_number = self.attempts
-            # 每 10 次显示一次进度；首个连接也显示，避免大量重复日志。
-            if attempt_number == 1 or attempt_number % 10 == 0:
-                print(
-                    f"🔢 WS 连接计数：尝试 {attempt_number} | 成功 {self.connected} | "
-                    f"活跃 {self.active} | getDanmuInfo {self.danmu_info_requests} | "
-                    f"-352 {self.risk_352}"
-                )
-            return attempt_number
+            return self.attempts
 
     def connection_opened(self):
         with self._lock:
             self.connected += 1
             self.active += 1
+            # 缓存房间会在短时间内并行发起大量连接；只汇报实际成功的里程碑，
+            # 避免输出尚未连接成功的“尝试”计数。
+            if self.connected == 1 or self.connected % 100 == 0:
+                print(
+                    f"🔌 WS 已连接 {self.connected} | 当前活跃 {self.active} | "
+                    f"getDanmuInfo {self.danmu_info_requests} | "
+                    f"-352 {self.risk_352}"
+                )
 
     def connection_closed(self):
         with self._lock:
@@ -140,7 +149,7 @@ class TokenRejectedError(RuntimeError):
 class DanmuInfoRateLimiter:
     """均匀、带抖动地限制 getDanmuInfo 调用，避免短时间内集中请求。"""
 
-    def __init__(self, max_requests=15, window_seconds=60, jitter_seconds=1.5):
+    def __init__(self, max_requests=10, window_seconds=60, jitter_seconds=1.5):
         self.max_requests = max_requests
         self.window_seconds = window_seconds
         self.jitter_seconds = jitter_seconds
@@ -196,6 +205,7 @@ class RoomWatcher(threading.Thread):
 
     def __init__(
         self, room, account_name, session, token_lock, wbi_keys, reconnect_delay, min_average,
+        min_anchor_average,
         notifier, database, notified_lot_ids, notified_lot_ids_lock, connection_stats,
         danmu_info_rate_limiter, connection_capacity,
     ):
@@ -207,6 +217,7 @@ class RoomWatcher(threading.Thread):
         self.wbi_keys = wbi_keys
         self.reconnect_delay = reconnect_delay
         self.min_average = min_average
+        self.min_anchor_average = min_anchor_average
         self.notifier = notifier
         self.database = database
         self.notified_lot_ids = notified_lot_ids
@@ -252,9 +263,10 @@ class RoomWatcher(threading.Thread):
         lot_id = str(data.get("lot_id") or data.get("red_packet_id") or "")
         if lot_id:
             with self.notified_lot_ids_lock:
-                if lot_id in self.notified_lot_ids:
+                notification_id = f"red:{self.room_id}:{lot_id}"
+                if notification_id in self.notified_lot_ids:
                     return
-                self.notified_lot_ids.add(lot_id)
+                self.notified_lot_ids.add(notification_id)
 
         awards = data.get("awards") or []
         gift_text = "\n".join(
@@ -283,6 +295,28 @@ class RoomWatcher(threading.Thread):
             total_price,
             draw_time,
             sender_name=data.get("sender_name") or data.get("uname") or "",
+            area_info="、".join(self.room.get("area_names") or []),
+        )
+
+    def send_anchor_lottery_notification(self, command):
+        """天选开始事件只通知一次，并复用统一的 Discord 抽奖通知格式。"""
+        details = anchor_lottery_details(command)
+        if details is None:
+            return
+        lottery_id = details["lot_id"]
+        if lottery_id:
+            with self.notified_lot_ids_lock:
+                notification_id = f"anchor:{self.room_id}:{lottery_id}"
+                if notification_id in self.notified_lot_ids:
+                    return
+                self.notified_lot_ids.add(notification_id)
+        self.notifier.send_lottery_notification(
+            self.room["host_name"],
+            self.room_id,
+            details["gift_text"],
+            details["requirement"],
+            details["total_price"],
+            details["draw_time"],
             area_info="、".join(self.room.get("area_names") or []),
         )
 
@@ -407,6 +441,23 @@ class RoomWatcher(threading.Thread):
                             except Exception as error:
                                 print(f"⚠️ 本地数据库写入失败：{error}")
                             self.send_discord_notification(command)
+                        elif PROCESS_ANCHOR_LOTTERY and name in ANCHOR_LOTTERY_COMMANDS:
+                            details = anchor_lottery_details(command)
+                            if (
+                                details is None
+                                or details["average_value"] < self.min_anchor_average
+                            ):
+                                continue
+                            now = time.strftime("%Y-%m-%d %H:%M:%S")
+                            print(
+                                f"[{now}] 🟪 {ANCHOR_LOTTERY_COMMANDS[name]} | {label} | "
+                                f"{anchor_lottery_summary(command)}"
+                            )
+                            try:
+                                self.database.save_anchor_event(self.room, command, details)
+                            except Exception as error:
+                                print(f"⚠️ 本地数据库写入失败：{error}")
+                            self.send_anchor_lottery_notification(command)
             except TokenRejectedError as error:
                 self.invalidate_cached_auth()
                 if not self.stop_event.is_set():
@@ -456,9 +507,21 @@ def oldest_connected_watcher(watchers):
     return min(candidates, default=None, key=lambda item: item[:2])
 
 
+def prioritize_rooms_by_cached_auth(rooms, database, account_name):
+    """缓存鉴权房间优先建连，未命中缓存的房间留给 HTTP 限流队列。"""
+    cached_rooms = []
+    uncached_rooms = []
+    for room in rooms:
+        if database.load_ws_auth_cache(account_name, room["room_id"]):
+            cached_rooms.append(room)
+        else:
+            uncached_rooms.append(room)
+    return cached_rooms, uncached_rooms
+
+
 def main():
     parser = argparse.ArgumentParser(
-        description="扫描分区人气榜，并实时监听入选房间的人气红包事件"
+        description="扫描分区人气榜，并实时监听入选房间的红包与可选天选事件"
     )
     parser.add_argument("--account", default="acct1", help="使用的已登录账号名，默认 acct1")
     parser.add_argument(
@@ -471,8 +534,12 @@ def main():
     )
     parser.add_argument("--reconnect-delay", type=int, default=10, help="单房间断线重连等待秒数")
     parser.add_argument(
-        "--min-average", type=float, default=10,
-        help="仅输出包均价值不低于该值的红包，默认 10 电池",
+        "--min-average", type=float, default=RED_PACKET_MIN_AVERAGE,
+        help="仅输出包均价值不低于该值的红包，默认读取 RED_PACKET_MIN_AVERAGE",
+    )
+    parser.add_argument(
+        "--min-anchor-average", type=float, default=ANCHOR_LOTTERY_MIN_AVERAGE,
+        help="仅输出包均价值不低于该值的天选，默认读取 ANCHOR_LOTTERY_MIN_AVERAGE",
     )
     parser.add_argument(
         "--discord-webhook", default=None,
@@ -491,8 +558,8 @@ def main():
         help="新房间启动额外随机等待的最大秒数，默认 1",
     )
     parser.add_argument(
-        "--max-get-danmu-info-per-minute", type=int, default=15,
-        help="每 60 秒最多调用 getDanmuInfo 的次数，默认 15",
+        "--max-get-danmu-info-per-minute", type=int, default=10,
+        help="每 60 秒最多调用 getDanmuInfo 的次数，默认 10",
     )
     parser.add_argument(
         "--get-danmu-info-jitter", type=float, default=1.5,
@@ -500,7 +567,7 @@ def main():
     )
     parser.add_argument(
         "--max-active-rooms", type=int, default=DEFAULT_MAX_ACTIVE_ROOMS,
-        help="实际同时保持的 WebSocket 连接上限，默认 1000",
+        help="实际同时保持的 WebSocket 连接上限，默认 2000",
     )
     args = parser.parse_args()
     if args.hot_rank_limit < 1:
@@ -519,6 +586,7 @@ def main():
         args.reconnect_delay < 1
         or args.connection_start_interval < 0
         or args.min_average < 0
+        or args.min_anchor_average < 0
         or args.max_get_danmu_info_per_minute < 1
     ):
         parser.error("重连和启动间隔不能小于要求的最小值")
@@ -538,6 +606,7 @@ def main():
     connection_capacity = ConnectionCapacity(args.max_active_rooms)
     print(
         f"分区榜 WS 红包扫描已启动：账号 {args.account}，"
+        f"天选事件：{'开启' if PROCESS_ANCHOR_LOTTERY else '关闭'}，"
         "按 Ctrl+C 停止。"
     )
     try:
@@ -556,8 +625,17 @@ def main():
 
             # 榜单中新出现的房间加入监视；房间离开榜单不会被关闭，只有
             # 下播、切断，或触发人数阈值的房间会在下一次刷新时移出管理列表。
-            rooms = all_rooms
-            for room in rooms:
+            cached_rooms, uncached_rooms = prioritize_rooms_by_cached_auth(
+                all_rooms, database, args.account
+            )
+            # 先快速启动可直接连 WS 的缓存房间；只有未命中缓存的房间才受
+            # 新房间启动间隔影响，并在各自线程中排队等待 getDanmuInfo 限流。
+            rooms = [(room, True) for room in cached_rooms] + [
+                (room, False) for room in uncached_rooms
+            ]
+            scheduled_cached = 0
+            scheduled_uncached = 0
+            for room, has_cached_auth in rooms:
                 room_id = room["room_id"]
                 if room_id in watchers:
                     continue
@@ -581,23 +659,28 @@ def main():
                     )
                 watcher = RoomWatcher(
                     room, args.account, session, token_lock, wbi_keys, args.reconnect_delay,
-                    args.min_average, notifier, database, notified_lot_ids, notified_lot_ids_lock,
+                    args.min_average, args.min_anchor_average, notifier, database,
+                    notified_lot_ids, notified_lot_ids_lock,
                     connection_stats, danmu_info_rate_limiter, connection_capacity,
                 )
                 watchers[room_id] = watcher
                 watcher.start()
-                time.sleep(
-                    args.connection_start_interval
-                    + random.uniform(0, args.connection_start_jitter)
-                )
+                if not has_cached_auth:
+                    scheduled_uncached += 1
+                    time.sleep(
+                        args.connection_start_interval
+                        + random.uniform(0, args.connection_start_jitter)
+                    )
+                else:
+                    scheduled_cached += 1
             danmu_info_status = (
                 "新 getDanmuInfo 请求已停止；"
                 if connection_stats.is_danmu_info_blocked()
                 else ""
             )
             print(
-                f"✅ 实际连接 {connection_stats.active_count()} 个，"
-                f"管理房间 {len(watchers)} 个，"
+                f"📊 本轮新增：缓存鉴权 {scheduled_cached}，待取鉴权 {scheduled_uncached} | "
+                f"实际连接 {connection_stats.active_count()}，管理房间 {len(watchers)} | "
                 f"getDanmuInfo 累计 {connection_stats.danmu_info_request_count()} 次；"
                 f"{danmu_info_status}"
                 f"{args.refresh_seconds // 60} 分钟后更新榜单。"

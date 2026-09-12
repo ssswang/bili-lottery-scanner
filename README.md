@@ -7,13 +7,13 @@ A browser-free monitor for B Zhan live-stream red packets. It uses one official 
 - One required QR-login account: `acct1`.
 - Merges Hot Rank and category-ranking sources by room ID, then monitors every discovered room.
 - Refreshes the ranking list every three minutes; only rooms that go offline are disconnected.
-- Keeps at most 1000 live WebSocket connections; a newly discovered room replaces the longest-connected room when full.
+- Keeps at most 2000 live WebSocket connections; a newly discovered room replaces the longest-connected room when full.
 - Disconnects rooms when their WebSocket reports more than 500 high-energy users or 10,000 cumulative viewers.
 - Only evaluates `POPULARITY_RED_POCKET_START`, which includes the total value and award count needed to calculate the packet average.
 - Outputs and optionally sends Discord notifications only for packets meeting the configured average threshold.
 - Stores qualifying packets, rooms, anchors, and senders in the local SQLite database `red_packet_monitor.db`; packets default to `is_battery_lottery = 1`.
 - Persistently caches per-account, per-room WebSocket tokens and host lists; cache-hit reconnects do not call `getDanmuInfo`, while rejected or repeatedly unconfirmed tokens are refreshed.
-- Spaces uncached `getDanmuInfo` token requests by at least four seconds with random jitter, capped at 15 per minute by default.
+- Spaces uncached `getDanmuInfo` token requests by at least six seconds with random jitter, capped at 10 per minute by default.
 
 ## Requirements
 
@@ -43,6 +43,9 @@ Edit `config.txt`. A minimal configuration is:
 RISK_BACKOFF_SECONDS=60
 DISCORD_ENABLED=0
 DISCORD_WEBHOOK=""
+PROCESS_ANCHOR_LOTTERY=0
+RED_PACKET_MIN_AVERAGE=10
+ANCHOR_LOTTERY_MIN_AVERAGE=10
 ```
 
 To enable Discord notifications, set:
@@ -69,7 +72,7 @@ Login generates and opens `qr_login.png`. Use the **Scan** feature in the B Zhan
 ## Start WS rank monitoring
 
 ```bat
-python ws_rank_red_packet_scanner.py --account acct1
+python list_scanner.py --account acct1
 ```
 
 The scanner continuously performs the following steps:
@@ -81,23 +84,23 @@ The scanner continuously performs the following steps:
 
 ## Live WebSocket red-packet watcher
 
-`ws_red_packet_watcher.py` keeps one WebSocket connection open for a selected live room and prints qualifying real-time red-packet start events. It reuses a named QR-login session and reconnects safely after a transient disconnect.
+`room_watcher.py` keeps one WebSocket connection open for a selected live room and prints qualifying real-time red-packet start events. It reuses a named QR-login session and reconnects safely after a transient disconnect.
 
 ```bat
-python ws_red_packet_watcher.py 1700657229 --account acct1
+python room_watcher.py 1700657229 --account acct1
 ```
 
-Run `ws_red_packet_watcher.bat` for an interactive Windows launcher. Install the newly added dependencies once with `pip install -r requirements.txt`.
+Run `room_watcher.bat` for an interactive Windows launcher. Install the newly added dependencies once with `pip install -r requirements.txt`.
 
 ### WebSocket category-rank red-packet scanner
 
-`ws_rank_red_packet_scanner.py` combines Hot Rank and configured category-ranking sources with the WebSocket watcher, deduplicating rooms by ID. It only evaluates `POPULARITY_RED_POCKET_START`, because that event includes both the prize total and count needed for a package-average calculation. It refreshes the rankings every three minutes and adds newly discovered rooms to monitoring. A room is disconnected only after its offline event arrives. It prints only red packets with an average value of at least 10 batteries and does not poll `getLotteryInfoWeb`.
+`list_scanner.py` combines Hot Rank and configured category-ranking sources with the WebSocket watcher, deduplicating rooms by ID. It starts rooms with cached WebSocket credentials first, so rooms waiting for `getDanmuInfo` do not delay them. It evaluates `POPULARITY_RED_POCKET_START` for qualifying red packets and can optionally observe `ANCHOR_LOT_START` events when `PROCESS_ANCHOR_LOTTERY=1` is set in `config.txt` (off by default). It refreshes the rankings every three minutes and adds newly discovered rooms to monitoring. The red-packet and anchor-lottery average thresholds are controlled by `RED_PACKET_MIN_AVERAGE` and `ANCHOR_LOTTERY_MIN_AVERAGE`, both defaulting to 10 batteries. It does not poll `getLotteryInfoWeb`.
 
 ```bat
-python ws_rank_red_packet_scanner.py --account acct1 --hot-rank-limit 100 --min-average 10
+python list_scanner.py --account acct1 --hot-rank-limit 100 --min-average 10
 ```
 
-Use `ws_rank_red_packet_scanner.bat` for the default Windows launcher.
+Use `list_scanner.bat` for the default Windows launcher.
 
 Set `DISCORD_ENABLED=1` and `DISCORD_WEBHOOK` in `config.txt` to send qualifying red-packet events to Discord. Alternatively, provide a one-run webhook with `--discord-webhook "https://discord.com/api/webhooks/..."`.
 
@@ -118,7 +121,10 @@ config.py               config.txt parsing and default values
 auth_manager.py         QR session storage, WBI signing, ticket refresh, and rate limiting
 room_lists.py           Rank-source room collection, normalization, and combined-list building
 discord_notifier.py     Discord notifications
-ws_rank_red_packet_scanner.py  Category-rank WebSocket red-packet monitor
-ws_rank_red_packet_scanner.bat Windows launcher for the WS monitor
+list_scanner.py                 Category-rank WebSocket red-packet monitor
+list_scanner.bat                Windows launcher for the WS monitor
+room_watcher.py                 Single-room WebSocket event watcher
+room_watcher.bat                Windows launcher for the single-room watcher
+test_ws_token_reuse.py          WebSocket token reuse test
 config.txt.sample       Sample configuration
 ```

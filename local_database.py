@@ -24,6 +24,7 @@ class LocalDatabase:
         self._ensure_column("rooms", "anchor_id", "TEXT")
         self._ensure_column("anchors", "anchor_id", "TEXT")
         self._ensure_column("red_packets", "is_battery_lottery", "INTEGER NOT NULL DEFAULT 1")
+        self._ensure_column("anchor_event", "average_value", "REAL NOT NULL DEFAULT 0")
 
     def _create_tables(self):
         with self._connection:
@@ -69,6 +70,22 @@ class LocalDatabase:
                     PRIMARY KEY (room_id, lot_id),
                     FOREIGN KEY (room_id) REFERENCES rooms(room_id),
                     FOREIGN KEY (sender_uid) REFERENCES senders(sender_uid)
+                );
+
+                CREATE TABLE IF NOT EXISTS anchor_event (
+                    room_id TEXT NOT NULL,
+                    lot_id TEXT NOT NULL,
+                    award_name TEXT NOT NULL DEFAULT '',
+                    award_count INTEGER NOT NULL DEFAULT 1,
+                    total_price INTEGER NOT NULL DEFAULT 0,
+                    average_value REAL NOT NULL DEFAULT 0,
+                    requirement TEXT NOT NULL DEFAULT '',
+                    start_time INTEGER,
+                    end_time INTEGER,
+                    recorded_at TEXT NOT NULL,
+                    raw_data_json TEXT NOT NULL,
+                    PRIMARY KEY (room_id, lot_id),
+                    FOREIGN KEY (room_id) REFERENCES rooms(room_id)
                 );
 
                 CREATE TABLE IF NOT EXISTS ws_auth_cache (
@@ -256,6 +273,88 @@ class LocalDatabase:
                     average_value, data.get("join_requirement"), data.get("start_time"),
                     data.get("end_time"), now,
                     json.dumps(data, ensure_ascii=False, separators=(",", ":")), is_battery_lottery,
+                ),
+            )
+        return True
+
+    def save_anchor_event(self, room, command, details):
+        """将一个 ANCHOR_LOT_START 事件做幂等写入。"""
+        data = command.get("data") or {}
+        room_id = str(room["room_id"])
+        lot_id = str(details.get("lot_id") or data.get("id") or "")
+        if not lot_id:
+            return False
+
+        now = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+        host_name = room.get("host_name") or "未知主播"
+        anchor_id = room.get("anchor_id")
+        anchor_id = str(anchor_id) if anchor_id is not None else None
+        try:
+            start_time = int(data.get("current_time"))
+        except (TypeError, ValueError):
+            start_time = None
+        try:
+            remaining_seconds = max(0, int(data.get("time", data.get("goaway_time", 0))))
+        except (TypeError, ValueError):
+            remaining_seconds = 0
+        try:
+            award_count = max(1, int(data.get("award_num", 1) or 1))
+        except (TypeError, ValueError):
+            award_count = 1
+        end_time = start_time + remaining_seconds if start_time is not None else None
+
+        with self._lock, self._connection:
+            self._connection.execute(
+                """
+                INSERT INTO rooms (room_id, host_name, anchor_id, first_seen_at, last_seen_at)
+                VALUES (?, ?, ?, ?, ?)
+                ON CONFLICT(room_id) DO UPDATE SET
+                    host_name=excluded.host_name,
+                    anchor_id=excluded.anchor_id,
+                    last_seen_at=excluded.last_seen_at
+                """,
+                (room_id, host_name, anchor_id, now, now),
+            )
+            self._connection.execute(
+                """
+                INSERT INTO anchors (room_id, anchor_id, anchor_name, last_seen_at)
+                VALUES (?, ?, ?, ?)
+                ON CONFLICT(room_id) DO UPDATE SET
+                    anchor_id=excluded.anchor_id,
+                    anchor_name=excluded.anchor_name,
+                    last_seen_at=excluded.last_seen_at
+                """,
+                (room_id, anchor_id, host_name, now),
+            )
+            self._connection.execute(
+                """
+                INSERT INTO anchor_event (
+                    room_id, lot_id, award_name, award_count, total_price, requirement,
+                    average_value, start_time, end_time, recorded_at, raw_data_json
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                ON CONFLICT(room_id, lot_id) DO UPDATE SET
+                    award_name=excluded.award_name,
+                    award_count=excluded.award_count,
+                    total_price=excluded.total_price,
+                    average_value=excluded.average_value,
+                    requirement=excluded.requirement,
+                    start_time=excluded.start_time,
+                    end_time=excluded.end_time,
+                    recorded_at=excluded.recorded_at,
+                    raw_data_json=excluded.raw_data_json
+                """,
+                (
+                    room_id,
+                    lot_id,
+                    data.get("award_name") or "未知奖品",
+                    award_count,
+                    details.get("total_price", 0),
+                    details.get("requirement") or "无要求",
+                    details.get("average_value", 0),
+                    start_time,
+                    end_time,
+                    now,
+                    json.dumps(data, ensure_ascii=False, separators=(",", ":")),
                 ),
             )
         return True

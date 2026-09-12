@@ -3,6 +3,7 @@
 
 import argparse
 import json
+import re
 import struct
 import time
 import zlib
@@ -23,6 +24,11 @@ from auth_manager import (
     request_bilibili,
     set_client_identity_cookies,
     sign_wbi,
+)
+from config import (
+    ANCHOR_LOTTERY_MIN_AVERAGE,
+    PROCESS_ANCHOR_LOTTERY,
+    RED_PACKET_MIN_AVERAGE,
 )
 
 try:
@@ -45,6 +51,9 @@ OP_AUTH_REPLY = 8
 
 RED_PACKET_COMMANDS = {
     "POPULARITY_RED_POCKET_START": "红包开始",
+}
+ANCHOR_LOTTERY_COMMANDS = {
+    "ANCHOR_LOT_START": "天选开始",
 }
 
 
@@ -251,6 +260,57 @@ def red_packet_average(command):
     return total_price / award_count if award_count else None
 
 
+def anchor_lottery_details(command):
+    """解析 ANCHOR_LOT_START，并转换为终端与通知所需的稳定字段。"""
+    if command.get("cmd", "").split(":", 1)[0] != "ANCHOR_LOT_START":
+        return None
+    data = command.get("data") or {}
+    award_name = data.get("award_name") or "未知奖品"
+    try:
+        award_num = int(data.get("award_num", 1))
+    except (TypeError, ValueError):
+        award_num = 1
+    price_match = re.search(r"价值\s*(\d+)\s*电池", str(data.get("award_price_text") or ""))
+    total_price = int(price_match.group(1)) if price_match else 0
+    try:
+        remaining_seconds = max(0, int(data.get("time", data.get("goaway_time", 0))))
+    except (TypeError, ValueError):
+        remaining_seconds = 0
+    try:
+        event_time = int(data.get("current_time"))
+    except (TypeError, ValueError):
+        event_time = int(time.time())
+    try:
+        draw_time = datetime.fromtimestamp(event_time + remaining_seconds).strftime(
+            "%Y-%m-%d %H:%M:%S"
+        )
+    except (ValueError, OSError, OverflowError):
+        draw_time = "未知"
+    return {
+        "lot_id": str(data.get("id") or ""),
+        "gift_text": f"🟪 {award_name} × {award_num}",
+        "requirement": data.get("require_text") or "无要求",
+        "total_price": total_price,
+        "average_value": total_price / award_num if award_num else 0,
+        "draw_time": draw_time,
+        "remaining_seconds": remaining_seconds,
+    }
+
+
+def anchor_lottery_summary(command):
+    """生成天选开始事件的终端摘要，不输出原始 JSON。"""
+    details = anchor_lottery_details(command)
+    if details is None:
+        return "天选信息无效"
+    lottery_id = details["lot_id"] or "未知"
+    return (
+        f"天选 ID: {lottery_id} | 奖品: {details['gift_text']} | "
+        f"价值: {details['total_price']} 电池 | 包均: {details['average_value']:.2f} 电池 | "
+        f"参与条件: {details['requirement']} | "
+        f"开奖时间: {details['draw_time']}"
+    )
+
+
 def watch(room_id, account_name, reconnect_delay):
     session = get_account_session(account_name)
     uid = int(get_cookie_value(session, "DedeUserID") or 0)
@@ -281,7 +341,12 @@ def watch(room_id, account_name, reconnect_delay):
                 "buvid": buvid3,
             }
             ws.send_binary(build_packet(json.dumps(auth, separators=(",", ":")), OP_AUTH))
-            print(f"✅ 已连接房间 {room_id}，正在监听红包事件（账号：{account_name}）。按 Ctrl+C 停止。")
+            print(
+                f"✅ 已连接房间 {room_id}，正在监听红包事件"
+                f"（红包包均 ≥ {RED_PACKET_MIN_AVERAGE:g}，天选：{'开启' if PROCESS_ANCHOR_LOTTERY else '关闭'}，"
+                f"天选包均 ≥ {ANCHOR_LOTTERY_MIN_AVERAGE:g}，账号：{account_name}）。"
+                "按 Ctrl+C 停止。"
+            )
             next_heartbeat = time.monotonic() + 30
 
             while True:
@@ -299,8 +364,23 @@ def watch(room_id, account_name, reconnect_delay):
                 for command in parse_packets(raw):
                     name = command.get("cmd", "").split(":", 1)[0]
                     if name in RED_PACKET_COMMANDS:
+                        average = red_packet_average(command)
+                        if average is None or average < RED_PACKET_MIN_AVERAGE:
+                            continue
                         now = time.strftime("%Y-%m-%d %H:%M:%S")
-                        print(f"[{now}] 🧧 {RED_PACKET_COMMANDS[name]} | {red_packet_summary(command)}")
+                        print(
+                            f"[{now}] 🧧 {RED_PACKET_COMMANDS[name]} | 包均: {average:.2f} 电池 | "
+                            f"{red_packet_summary(command)}"
+                        )
+                    elif PROCESS_ANCHOR_LOTTERY and name in ANCHOR_LOTTERY_COMMANDS:
+                        details = anchor_lottery_details(command)
+                        if details is None or details["average_value"] < ANCHOR_LOTTERY_MIN_AVERAGE:
+                            continue
+                        now = time.strftime("%Y-%m-%d %H:%M:%S")
+                        print(
+                            f"[{now}] 🟪 {ANCHOR_LOTTERY_COMMANDS[name]} | "
+                            f"{anchor_lottery_summary(command)}"
+                        )
         except KeyboardInterrupt:
             print("\n已停止监听。")
             return
@@ -317,7 +397,7 @@ def watch(room_id, account_name, reconnect_delay):
 
 
 def main():
-    parser = argparse.ArgumentParser(description="通过直播 WebSocket 实时查看指定房间的人气红包事件")
+    parser = argparse.ArgumentParser(description="通过直播 WebSocket 实时查看指定房间的红包与可选天选事件")
     parser.add_argument("room_id", help="要监听的直播间房间号")
     parser.add_argument("--account", default="acct1", help="使用的已登录账号名，默认 acct1")
     parser.add_argument("--reconnect-delay", type=int, default=10, help="断线重连等待秒数，默认 10")

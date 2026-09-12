@@ -32,6 +32,16 @@ def get_int(config, key, default, minimum=None):
     return max(minimum, value) if minimum is not None else value
 
 
+def get_float(config, key, default, minimum=None):
+    """读取小数配置；无效时回退默认值，可限制最小值。"""
+    try:
+        value = float(config.get(key, default))
+    except (TypeError, ValueError):
+        print(f"⚠️ 配置 {key} 无效，使用默认值 {default}。")
+        return default
+    return max(minimum, value) if minimum is not None else value
+
+
 CONFIG = load_config()
 
 # 当前 WS 监视器需要的运行配置。
@@ -40,6 +50,15 @@ RISK_BACKOFF_SECONDS = get_int(CONFIG, "RISK_BACKOFF_SECONDS", 60, minimum=60)
 # Discord 配置
 DISCORD_ENABLED = get_int(CONFIG, "DISCORD_ENABLED", 0) == 1
 DISCORD_WEBHOOK = CONFIG.get("DISCORD_WEBHOOK", "")
+
+# 天选抽奖事件：1 = 解析、输出并发送 Discord 通知；默认关闭。
+PROCESS_ANCHOR_LOTTERY = get_int(CONFIG, "PROCESS_ANCHOR_LOTTERY", 0) == 1
+
+# 仅当奖品总价值除以份数达到阈值时，才输出和发送对应事件通知。
+RED_PACKET_MIN_AVERAGE = get_float(CONFIG, "RED_PACKET_MIN_AVERAGE", 10, minimum=0)
+ANCHOR_LOTTERY_MIN_AVERAGE = get_float(
+    CONFIG, "ANCHOR_LOTTERY_MIN_AVERAGE", 10, minimum=0
+)
 
 # 不建立 WebSocket 监视的房间 ID；config.txt 可用逗号分隔的 ROOM_BLACKLIST 追加。
 DEFAULT_ROOM_BLACKLIST = {"2233", "25383355"}

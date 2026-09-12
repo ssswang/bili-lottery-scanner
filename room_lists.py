@@ -153,8 +153,8 @@ class RoomListBuilder:
                     }
                 )
         print(
-            "成功获取分区人气榜房间数量："
-            f"{len(rooms)}（{successful_rank_count}/{len(POPULAR_ANCHOR_RANKS)} 个分区）"
+            "📋 分区榜直播间："
+            f"{len(rooms)}（已获取 {successful_rank_count}/{len(POPULAR_ANCHOR_RANKS)} 个分区）"
         )
         return rooms
 

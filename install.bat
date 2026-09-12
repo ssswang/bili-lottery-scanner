@@ -26,5 +26,5 @@ if errorlevel 1 (
 
 echo.
 echo 安装完成。
-echo 启动红包监视器：ws_rank_red_packet_scanner.bat
+echo 启动红包监视器：list_scanner.bat
 pause
