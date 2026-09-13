@@ -78,7 +78,7 @@ class ConnectionStats:
         if used_cached_auth:
             self.cached_auth_confirmed += 1
         if self.connected == 1 or self.connected % 100 == 0:
-            log(f"🔌 WS 鉴权成功 {self.connected} | 当前活跃 {self.active} | 缓存成功 {self.cached_auth_confirmed} | getDanmuInfo {self.danmu_info_requests}")
+            log(f"🔌 房间连接成功 {self.connected} | 当前活跃 {self.active} | 缓存成功 {self.cached_auth_confirmed} | getDanmuInfo {self.danmu_info_requests}")
 
     def record_connection_closed(self):
         self.active = max(0, self.active - 1)
@@ -363,7 +363,7 @@ class AsyncListScanner:
         for room in cached + uncached:
             self.queued_room_ids.add(room["room_id"])
             self.room_queue.put_nowait(room)
-        log(f"📊 父分区队列：本轮新增 缓存鉴权 {len(cached)}，待取鉴权 {len(uncached)} | 队列待处理 {self.room_queue.qsize()}，已分配 {len(self.queued_room_ids)} | 实际连接 {self.stats.active} | 鉴权确认 {self.stats.auth_confirmed}（缓存成功 {self.stats.cached_auth_confirmed}，缓存失败 {self.stats.cached_auth_failed}，超时 {self.stats.auth_timeouts}） | getDanmuInfo 累计 {self.stats.danmu_info_requests} 次。")
+        log(f"📊 大分区队列：本轮新增 token 缓存命中 {len(cached)}，全新待取 {len(uncached)} | 待获取 token 队列 {self.room_queue.qsize()} | 实际房间连接 {self.stats.active} | 累计连接 {self.stats.auth_confirmed}（token 读取缓存：成功 {self.stats.cached_auth_confirmed}，失败 {self.stats.cached_auth_failed}，超时 {self.stats.auth_timeouts}） | 全新获取累计 {self.stats.danmu_info_requests} 次。")
 
     async def run(self):
         database_task, notification_task = asyncio.create_task(self.database_worker()), asyncio.create_task(self.notification_worker())

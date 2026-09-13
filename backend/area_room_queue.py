@@ -10,6 +10,7 @@ from backend.auth.api_auth import USER_AGENT, request_bilibili
 
 AREA_ROOM_LIST_URL = "https://api.live.bilibili.com/room/v3/area/getRoomList"
 PARENT_AREA_IDS = (1, 5, 9)
+PARENT_AREA_NAMES = {1: "娱乐", 5: "电台", 9: "虚拟"}
 PAGE_SIZE = 99
 
 
@@ -38,8 +39,11 @@ class AreaRoomQueueBuilder:
                     continue
                 self._merge_room(existing, room)
         rooms = list(rooms_by_id.values())
-        summary = "，".join(f"{area_id}区 {count}" for area_id, count in totals.items())
-        log(f"📋 父分区房间：{len(rooms)}（{summary}，去重后）")
+        summary = "，".join(
+            f"{PARENT_AREA_NAMES.get(area_id, f'{area_id}区')} {count}"
+            for area_id, count in totals.items()
+        )
+        log(f"📋 大分区房间：{len(rooms)}（{summary}，去重后）")
         return rooms
 
     def get_parent_area_rooms(self, parent_area_id):
@@ -67,17 +71,17 @@ class AreaRoomQueueBuilder:
                 response.raise_for_status()
                 payload = response.json()
             except (requests.RequestException, ValueError) as error:
-                raise RuntimeError(f"获取父分区 {parent_area_id} 第 {page} 页失败：{error}") from error
+                raise RuntimeError(f"获取大分区 {parent_area_id} 第 {page} 页失败：{error}") from error
 
             if payload.get("code") != 0:
                 raise RuntimeError(
-                    f"获取父分区 {parent_area_id} 第 {page} 页失败："
+                    f"获取大分区 {parent_area_id} 第 {page} 页失败："
                     f"{payload.get('code')} {payload.get('message', payload.get('msg', '未知错误'))}"
                 )
             data = payload.get("data") or {}
             items = data.get("list") or []
             if not isinstance(items, list):
-                raise RuntimeError(f"父分区 {parent_area_id} 第 {page} 页未返回房间列表")
+                raise RuntimeError(f"大分区 {parent_area_id} 第 {page} 页未返回房间列表")
             for item in items:
                 if isinstance(item, dict):
                     room = self.normalize_room(item, parent_area_id)
@@ -112,7 +116,7 @@ class AreaRoomQueueBuilder:
         if parent_name and area_name and parent_name != area_name:
             area_names = [f"{parent_name} / {area_name}"]
         else:
-            area_names = [area_name or parent_name or f"父分区 {requested_parent_area_id}"]
+            area_names = [area_name or parent_name or PARENT_AREA_NAMES.get(requested_parent_area_id, f"大分区 {requested_parent_area_id}")]
         return {
             "room_id": str(room_id),
             "host_name": str(host_name),
