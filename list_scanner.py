@@ -45,7 +45,8 @@ from room_watcher import (
 MAX_HIGH_ENERGY_USERS = 500
 MAX_CUMULATIVE_WATCHERS = 10_000
 DEFAULT_MAX_ACTIVE_ROOMS = 2000
-MAX_RISK_352_BEFORE_DANMU_INFO_STOP = 100
+MAX_CONSECUTIVE_352_BEFORE_DANMU_INFO_STOP = 10
+AUTH_REPLY_TIMEOUT_SECONDS = 15
 
 
 def log(message):
@@ -62,7 +63,12 @@ class ConnectionStats:
         self.connected = 0
         self.active = 0
         self.risk_352 = 0
+        self.consecutive_risk_352 = 0
         self.failures = 0
+        self.auth_confirmed = 0
+        self.cached_auth_confirmed = 0
+        self.cached_auth_failed = 0
+        self.auth_timeouts = 0
         self.danmu_info_requests = 0
         self.danmu_info_blocked = False
 
@@ -81,7 +87,8 @@ class ConnectionStats:
                 log(
                     f"🔌 WS 已连接 {self.connected} | 当前活跃 {self.active} | "
                     f"getDanmuInfo {self.danmu_info_requests} | "
-                    f"-352 {self.risk_352}"
+                    f"缓存鉴权成功 {self.cached_auth_confirmed} | "
+                    f"-352 累计 {self.risk_352}／连续 {self.consecutive_risk_352}"
                 )
 
     def connection_closed(self):
@@ -103,25 +110,56 @@ class ConnectionStats:
             return self.danmu_info_requests
 
     def is_danmu_info_blocked(self):
-        """达到 -352 阈值后，禁止新的 getDanmuInfo 请求但不影响缓存重连。"""
+        """连续 -352 达到阈值后，禁止新的 getDanmuInfo 请求但不影响缓存重连。"""
         with self._lock:
             return self.danmu_info_blocked
+
+    def record_danmu_info_success(self):
+        """一次成功的 getDanmuInfo 会清空连续 -352 计数。"""
+        with self._lock:
+            self.consecutive_risk_352 = 0
+
+    def record_auth_confirmed(self, used_cached_auth):
+        """只在服务端 OP_AUTH_REPLY code=0 后记录为有效连接。"""
+        with self._lock:
+            self.auth_confirmed += 1
+            if used_cached_auth:
+                self.cached_auth_confirmed += 1
+
+    def record_auth_failure(self, used_cached_auth, timed_out=False):
+        """记录未获服务端确认的缓存 token，便于判断复用是否有效。"""
+        with self._lock:
+            if used_cached_auth:
+                self.cached_auth_failed += 1
+            if timed_out:
+                self.auth_timeouts += 1
+
+    def auth_status(self):
+        with self._lock:
+            return (
+                self.auth_confirmed,
+                self.cached_auth_confirmed,
+                self.cached_auth_failed,
+                self.auth_timeouts,
+            )
 
     def record_352(self, attempt_number, room_id):
         with self._lock:
             self.risk_352 += 1
+            self.consecutive_risk_352 += 1
             log(
                 f"⚠️ -352 连接计数：第 {attempt_number} 次请求 | 房间 {room_id} | "
                 f"成功 {self.connected} | 活跃 {self.active} | "
-                f"getDanmuInfo {self.danmu_info_requests} | 累计 -352 {self.risk_352}"
+                f"getDanmuInfo {self.danmu_info_requests} | "
+                f"-352 累计 {self.risk_352}／连续 {self.consecutive_risk_352}"
             )
             if (
-                self.risk_352 >= MAX_RISK_352_BEFORE_DANMU_INFO_STOP
+                self.consecutive_risk_352 >= MAX_CONSECUTIVE_352_BEFORE_DANMU_INFO_STOP
                 and not self.danmu_info_blocked
             ):
                 self.danmu_info_blocked = True
                 log(
-                    f"⛔ 累计 -352 已达 {MAX_RISK_352_BEFORE_DANMU_INFO_STOP} 次："
+                    f"⛔ 连续 -352 已达 {MAX_CONSECUTIVE_352_BEFORE_DANMU_INFO_STOP} 次："
                     "停止新的 getDanmuInfo 请求；已缓存的房间仍可重连。"
                 )
 
@@ -149,6 +187,10 @@ class ConnectionCapacity:
 
 class TokenRejectedError(RuntimeError):
     """服务端明确拒绝或持续无法确认缓存 token 的鉴权。"""
+
+
+class AuthConfirmationTimeout(RuntimeError):
+    """发送鉴权包后，未能在限定时间内收到 OP_AUTH_REPLY。"""
 
 
 class DanmuInfoRateLimiter:
@@ -346,6 +388,7 @@ class RoomWatcher(threading.Thread):
                 return None
             self.connection_stats.record_danmu_info_request()
             token, hosts = get_danmu_info(self.session, self.room_id, self.wbi_keys)
+            self.connection_stats.record_danmu_info_success()
             self.database.save_ws_auth_cache(self.account_name, self.room_id, token, hosts)
             self._used_cached_auth = False
             return token, hosts
@@ -388,6 +431,7 @@ class RoomWatcher(threading.Thread):
         while not self.stop_event.is_set():
             counted_open = False
             slot_acquired = False
+            auth_confirmed = False
             attempt_number = self.connection_stats.attempt(self.room_id)
             try:
                 auth_info = self._get_auth_info()
@@ -398,15 +442,18 @@ class RoomWatcher(threading.Thread):
                 slot_acquired = True
                 self._auth_reply_received = False
                 self._socket = self._connect(auth_info)
-                self.connection_stats.connection_opened()
-                counted_open = True
-                self.mark_connected()
+                auth_deadline = time.monotonic() + AUTH_REPLY_TIMEOUT_SECONDS
                 next_heartbeat = time.monotonic() + 30
                 while not self.stop_event.is_set():
-                    self._socket.settimeout(max(1, next_heartbeat - time.monotonic()))
+                    deadline = next_heartbeat if auth_confirmed else auth_deadline
+                    self._socket.settimeout(max(1, deadline - time.monotonic()))
                     try:
                         message = self._socket.recv()
                     except websocket.WebSocketTimeoutException:
+                        if not auth_confirmed:
+                            raise AuthConfirmationTimeout(
+                                f"{AUTH_REPLY_TIMEOUT_SECONDS} 秒内未收到 WebSocket 鉴权确认"
+                            )
                         self._socket.send_binary(build_packet(b"", OP_HEARTBEAT))
                         next_heartbeat = time.monotonic() + 30
                         continue
@@ -421,7 +468,13 @@ class RoomWatcher(threading.Thread):
                             raise TokenRejectedError(
                                 f"WebSocket 鉴权被拒绝：code={auth_reply.get('code')}，{message}"
                             )
-                        self._cached_auth_failures = 0
+                        if not auth_confirmed:
+                            auth_confirmed = True
+                            self._cached_auth_failures = 0
+                            self.connection_stats.record_auth_confirmed(self._used_cached_auth)
+                            self.connection_stats.connection_opened()
+                            counted_open = True
+                            self.mark_connected()
                         continue
                     for command in parse_packets(raw):
                         name = command.get("cmd", "").split(":", 1)[0]
@@ -464,6 +517,7 @@ class RoomWatcher(threading.Thread):
                                 log(f"⚠️ 本地数据库写入失败：{error}")
                             self.send_anchor_lottery_notification(command)
             except TokenRejectedError as error:
+                self.connection_stats.record_auth_failure(self._used_cached_auth)
                 self.invalidate_cached_auth()
                 if not self.stop_event.is_set():
                     log(f"⚠️ {label}：{error}；将重新获取鉴权信息。")
@@ -474,6 +528,11 @@ class RoomWatcher(threading.Thread):
                 self.stop_event.wait(max(60, self.reconnect_delay))
             except (requests.RequestException, RuntimeError, OSError, websocket.WebSocketException) as error:
                 self.connection_stats.record_failure()
+                if not auth_confirmed:
+                    self.connection_stats.record_auth_failure(
+                        self._used_cached_auth,
+                        timed_out=isinstance(error, AuthConfirmationTimeout),
+                    )
                 if self._used_cached_auth and not self._auth_reply_received:
                     self._cached_auth_failures += 1
                     if self._cached_auth_failures >= 2:
@@ -668,9 +727,14 @@ def main():
                 if connection_stats.is_danmu_info_blocked()
                 else ""
             )
+            auth_confirmed, cached_auth_confirmed, cached_auth_failed, auth_timeouts = (
+                connection_stats.auth_status()
+            )
             log(
                 f"📊 本轮新增：缓存鉴权 {scheduled_cached}，待取鉴权 {scheduled_uncached} | "
                 f"实际连接 {connection_stats.active_count()}，管理房间 {len(watchers)} | "
+                f"鉴权确认 {auth_confirmed}（缓存成功 {cached_auth_confirmed}，"
+                f"缓存失败 {cached_auth_failed}，超时 {auth_timeouts}） | "
                 f"getDanmuInfo 累计 {connection_stats.danmu_info_request_count()} 次；"
                 f"{danmu_info_status}"
                 f"{args.refresh_seconds // 60} 分钟后更新榜单。"
