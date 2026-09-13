@@ -7,13 +7,14 @@ A browser-free monitor for B Zhan live-stream red packets. It uses one official 
 - One required QR-login account: `acct1`.
 - Merges Hot Rank and category-ranking sources by room ID, then monitors every discovered room.
 - Refreshes the ranking list every three minutes; only rooms that go offline are disconnected.
-- Keeps at most 2000 live WebSocket connections; a newly discovered room replaces the longest-connected room when full.
+- Uses one `asyncio` event loop with `aiohttp` WebSockets, avoiding one Python thread per room; database writes and Discord notifications are handled by independent queues.
+- Keeps at most 2000 live WebSocket connections.
 - Disconnects rooms when their WebSocket reports more than 500 high-energy users or 10,000 cumulative viewers.
 - Only evaluates `POPULARITY_RED_POCKET_START`, which includes the total value and award count needed to calculate the packet average.
 - Outputs and optionally sends Discord notifications only for packets meeting the configured average threshold.
-- Stores qualifying packets, rooms, anchors, and senders in the local SQLite database `red_packet_monitor.db`; packets default to `is_battery_lottery = 1`.
+- Stores qualifying packets, rooms, anchors, and senders in the local SQLite database `data/red_packet_monitor.db`; packets default to `is_battery_lottery = 1`.
 - Persistently caches per-account, per-room WebSocket tokens and host lists; cache-hit reconnects do not call `getDanmuInfo`, while rejected or repeatedly unconfirmed tokens are refreshed.
-- Spaces uncached `getDanmuInfo` token requests by at least 7.5 seconds with random jitter, capped at 8 per minute by default.
+- Spaces uncached `getDanmuInfo` token requests by at least 10 seconds with random jitter, capped at 6 per minute by default.
 
 ## Requirements
 
@@ -67,7 +68,7 @@ python qr_login.py --name acct1
 
 Alternatively, double-click `qr_login_acct1.bat`.
 
-Login generates and opens `qr_login.png`. Use the **Scan** feature in the B Zhan mobile app to scan the image and confirm the login on your phone. The session is saved as `lotteryapi_session_acct1.json`.
+Login generates and opens `data/qr_login.png`. Use the **Scan** feature in the B Zhan mobile app to scan the image and confirm the login on your phone. The session is saved as `data/lotteryapi_session_acct1.json`.
 
 ## Start WS rank monitoring
 
@@ -118,7 +119,10 @@ Set `DISCORD_ENABLED=1` and `DISCORD_WEBHOOK` in `config.txt` to send qualifying
 qr_login.py             Named-account QR login launcher
 qr_login_acct1.bat      Windows launcher for acct1 QR login
 config.py               config.txt parsing and default values
-auth_manager.py         QR session storage, WBI signing, ticket refresh, and rate limiting
+auth/api_auth.py        API/WBI signing, device identity, ticket refresh, and rate limiting
+auth/user_auth.py       Saved user sessions and QR-login entry points
+auth/ws_auth.py         getDanmuInfo token retrieval and -352 handling
+data/                   Reserved local data directory (database and session artifacts)
 room_lists.py           Rank-source room collection, normalization, and combined-list building
 discord_notifier.py     Discord notifications
 list_scanner.py                 Category-rank WebSocket red-packet monitor

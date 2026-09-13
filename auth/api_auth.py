@@ -11,25 +11,19 @@ import time
 import uuid
 from collections import deque
 from pathlib import Path
-from urllib.parse import parse_qsl, quote, urlencode, urlparse
+from urllib.parse import quote, urlencode, urlparse
 
 import requests
-
-from proxy.proxy_pool import request_proxies
-
 
 TICKET_API_URL = "https://api.bilibili.com/bapis/bilibili.api.ticket.v1.Ticket/GenWebTicket"
 NAV_API_URL = "https://api.bilibili.com/x/web-interface/nav"
 NAVIGATE_API_URL = "https://api.live.bilibili.com/room/v2/Index/getNavigate"
 EX_CLIMB_WUZHI_URL = "https://api.bilibili.com/x/internal/gaia-gateway/ExClimbWuzhi"
-COOKIE_INFO_URL = "https://passport.bilibili.com/x/passport-login/web/cookie/info"
 HOME_PAGE_URL = "https://www.bilibili.com/"
 FINGERPRINT_API_URL = "https://api.bilibili.com/x/frontend/finger/spi"
-QR_GENERATE_URL = "https://passport.bilibili.com/x/passport-login/web/qrcode/generate"
-QR_POLL_URL = "https://passport.bilibili.com/x/passport-login/web/qrcode/poll"
-SESSION_PATH = Path(__file__).with_name("lotteryapi_session.json")
-ANON_IDENTITIES_PATH = Path(__file__).with_name("anonymous_identities.json")
-QR_IMAGE_PATH = Path(__file__).with_name("qr_login.png")
+PROJECT_ROOT = Path(__file__).resolve().parent.parent
+DATA_DIR = PROJECT_ROOT / "data"
+ANON_IDENTITIES_PATH = DATA_DIR / "anonymous_identities.json"
 USER_AGENT = (
     "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
     "AppleWebKit/537.36 (KHTML, like Gecko) Chrome/140.0.0.0 Safari/537.36"
@@ -42,7 +36,7 @@ DEVICE_TIMEZONE = "America/New_York"
 
 # 每个身份（账号/匿名连接）一份唯一且持久化的硬件指纹档案，避免多个
 # 身份共享同一"设备"特征而被风控关联。
-DEVICE_PROFILES_PATH = Path(__file__).with_name("device_profiles.json")
+DEVICE_PROFILES_PATH = DATA_DIR / "device_profiles.json"
 
 # 现实存在的 WebGL vendor~renderer 组合，与对应分辨率/时区随机搭配。
 WEBGL_POOL = (
@@ -143,55 +137,6 @@ def request_bilibili(session, method, url, **kwargs):
     return getattr(session, method)(url, **kwargs)
 
 
-def load_session():
-    """读取扫码登录后保存的 Cookie；文件不存在时返回空配置。"""
-    if not SESSION_PATH.is_file():
-        return {}
-    try:
-        return json.loads(SESSION_PATH.read_text(encoding="utf-8"))
-    except (OSError, json.JSONDecodeError) as error:
-        raise RuntimeError(f"读取直接 API 会话文件失败：{error}") from error
-
-
-def session_file(name):
-    """按账号名返回会话文件路径。"""
-    return Path(__file__).with_name(f"lotteryapi_session_{name}.json")
-
-
-def save_session(cookie_header, refresh_token, name="default"):
-    """保存指定账号的 Cookie 与刷新令牌。"""
-    path = session_file(name) if name != "default" else SESSION_PATH
-    path.write_text(json.dumps({"cookie_header": cookie_header, "refresh_token": refresh_token}, ensure_ascii=False, indent=2), encoding="utf-8")
-
-
-def load_saved_sessions():
-    """读取所有已保存的登录账号，返回 [(账号名, cookie_header), ...]。"""
-    sessions = []
-    seen_names = set()
-    if SESSION_PATH.is_file():
-        try:
-            data = json.loads(SESSION_PATH.read_text(encoding="utf-8"))
-            header = data.get("cookie_header", "")
-            if header:
-                sessions.append(("default", header))
-                seen_names.add("default")
-        except (OSError, json.JSONDecodeError) as error:
-            print(f"⚠️ 读取默认会话文件失败：{error}")
-    for path in Path(__file__).parent.glob("lotteryapi_session_*.json"):
-        name = path.stem[len("lotteryapi_session_"):]
-        if name in seen_names:
-            continue
-        try:
-            data = json.loads(path.read_text(encoding="utf-8"))
-            header = data.get("cookie_header", "")
-        except (OSError, json.JSONDecodeError) as error:
-            print(f"⚠️ 读取会话文件 {path.name} 失败：{error}")
-            continue
-        if header:
-            sessions.append((name, header))
-    return sessions
-
-
 def parse_cookie_header(cookie_header):
     """将完整 Cookie 请求头转换为 requests Cookie。"""
     cookies = {}
@@ -220,8 +165,8 @@ def get_csrf(session):
     return get_cookie_value(session, "bili_jct")
 
 
-def create_session(cookie_header, proxy_url=None):
-    """创建带有用户 Cookie 和常用 Web 请求头的会话；可选绑定一个代理。"""
+def create_session(cookie_header):
+    """创建带有用户 Cookie 和常用 Web 请求头的直连会话。"""
     session = requests.Session()
     # 缺少 sec-ch-ua / sec-fetch 系列头会直接被 getLotteryInfoWeb 以 -352 拒绝。
     session.headers.update({
@@ -237,10 +182,6 @@ def create_session(cookie_header, proxy_url=None):
         "sec-fetch-site": "same-site",
     })
     session.cookies.update(parse_cookie_header(cookie_header))
-    if proxy_url:
-        # 忽略系统环境变量里的代理设置，避免与配置的代理叠加。
-        session.trust_env = False
-        session.proxies.update(request_proxies(proxy_url))
     return session
 
 
@@ -249,7 +190,7 @@ def build_cookie_header(session):
     return "; ".join(f"{cookie.name}={cookie.value}" for cookie in session.cookies)
 
 
-def build_anonymous_session(proxy_url=None, identity_key=None):
+def build_anonymous_session(identity_key=None):
     """构建带完整设备指纹的匿名会话（无登录 Cookie）。
 
     identity_key 非空时优先复用磁盘上已持久化的设备身份——匿名身份应像
@@ -259,7 +200,7 @@ def build_anonymous_session(proxy_url=None, identity_key=None):
     if identity_key:
         stored_header = load_anonymous_identities().get(identity_key, "")
         if stored_header:
-            session = create_session(stored_header, proxy_url=proxy_url)
+            session = create_session(stored_header)
             try:
                 if not get_cookie_value(session, "bili_ticket"):
                     get_bili_ticket(session)
@@ -267,7 +208,7 @@ def build_anonymous_session(proxy_url=None, identity_key=None):
                 print(f"⚠️ 刷新 bili_ticket 失败：{error}")
             return session
 
-    session = create_session("", proxy_url=proxy_url)
+    session = create_session("")
     # 每个身份一份唯一的设备指纹档案（WebGL/分辨率/时区/canvas/_uuid）。
     profile = get_device_profile(identity_key) if identity_key else None
     try:
@@ -318,89 +259,6 @@ def drop_anonymous_identity(identity_key):
             )
         except OSError as error:
             print(f"⚠️ 清理匿名身份失败：{error}")
-
-
-def save_qr_image(login_url):
-    """生成并打开供 B Zhan App 扫码的本地二维码图片。"""
-    try:
-        import qrcode
-    except ImportError as error:
-        raise SystemExit("缺少二维码依赖。请先执行：pip install -r requirements.txt") from error
-    qrcode.make(login_url).save(QR_IMAGE_PATH)
-    print(f"二维码图片已生成：{QR_IMAGE_PATH}")
-    try:
-        os.startfile(QR_IMAGE_PATH)
-    except OSError as error:
-        print(f"无法自动打开二维码图片，请手动打开该文件：{error}")
-
-
-def build_login_cookie_header(session, login_data):
-    """合并响应 Cookie 与跨域登录 URL 中的 Web 登录 Cookie。"""
-    cookies = {cookie.name: cookie.value for cookie in session.cookies}
-    names = {"DedeUserID", "DedeUserID__ckMd5", "SESSDATA", "bili_jct", "sid"}
-    for key, value in parse_qsl(urlparse(login_data.get("url", "")).query, keep_blank_values=True):
-        if key in names:
-            cookies[key] = value
-    return "; ".join(f"{key}={value}" for key, value in cookies.items())
-
-
-def bootstrap_device_cookies(session):
-    """初始化 QR 登录会话的 Web 设备标识。"""
-    response = session.get(HOME_PAGE_URL, timeout=10)
-    response.raise_for_status()
-    response = session.get(FINGERPRINT_API_URL, headers={"Referer": HOME_PAGE_URL}, timeout=10)
-    response.raise_for_status()
-    data = response.json().get("data", {})
-    buvid3, buvid4 = data.get("b_3"), data.get("b_4")
-    if not buvid3 or not buvid4:
-        raise RuntimeError("设备指纹接口未返回 buvid3 / buvid4")
-    session.cookies.set("buvid3", buvid3, domain=".bilibili.com", path="/")
-    session.cookies.set("buvid4", buvid4, domain=".bilibili.com", path="/")
-    if "b_nut" not in {cookie.name for cookie in session.cookies}:
-        session.cookies.set("b_nut", str(int(time.time())), domain=".bilibili.com", path="/")
-
-
-def qr_login_main(name="default"):
-    """通过官方 Web 二维码登录并保存指定账号的直接 API 会话。"""
-    session = requests.Session()
-    session.headers.update({"User-Agent": USER_AGENT, "Referer": HOME_PAGE_URL})
-    try:
-        bootstrap_device_cookies(session)
-        response = session.get(QR_GENERATE_URL, timeout=10)
-        response.raise_for_status()
-        payload = response.json()
-    except (requests.RequestException, RuntimeError) as error:
-        raise SystemExit(f"获取登录二维码失败：{error}") from error
-    data = payload.get("data", {}) if payload.get("code") == 0 else {}
-    login_url, qrcode_key = data.get("url"), data.get("qrcode_key")
-    if not login_url or not qrcode_key:
-        raise SystemExit(f"获取登录二维码失败：{payload.get('message', payload)}")
-    save_qr_image(login_url)
-    print(f"请使用 B Zhan App 的“扫一扫”扫描已打开的二维码图片并确认登录（账号 {name}），二维码有效期约三分钟。")
-    deadline, last_status = time.monotonic() + 185, None
-    while time.monotonic() < deadline:
-        try:
-            response = session.get(QR_POLL_URL, params={"qrcode_key": qrcode_key}, timeout=10)
-            response.raise_for_status()
-            payload = response.json()
-        except requests.RequestException as error:
-            raise SystemExit(f"轮询登录状态失败：{error}") from error
-        data = payload.get("data", {})
-        status = data.get("code")
-        if status == 0:
-            cookie_header = build_login_cookie_header(session, data)
-            if "SESSDATA=" not in cookie_header:
-                raise SystemExit("登录成功但未收到 SESSDATA，Cookie 未保存；请重新运行脚本。")
-            save_session(cookie_header, data.get("refresh_token", ""), name=name)
-            print(f"✅ 账号 {name} 登录成功；会话已保存。")
-            return
-        if status == 86038:
-            raise SystemExit("二维码已失效，请重新运行脚本。")
-        if status != last_status:
-            print({86101: "等待扫码", 86090: "已扫码，等待手机确认"}.get(status, f"登录状态：{status} {data.get('message', '')}"))
-            last_status = status
-        time.sleep(2)
-    raise SystemExit("二维码已超时，请重新运行脚本。")
 
 
 def generate_and_set_buvid_fp(session, profile=None):
@@ -597,36 +455,3 @@ def sign_wbi(params, img_key, sub_key):
     signed["w_rid"] = hashlib.md5(f"{query}{mixin_key}".encode("utf-8")).hexdigest()
     return signed
 
-
-def check_cookie_refresh(session):
-    """仅检查 Cookie 是否需要官方刷新；不自动执行验证码流程。"""
-    response = request_bilibili(session, "get", COOKIE_INFO_URL, params={"csrf": get_csrf(session)}, headers={"Referer": HOME_PAGE_URL}, timeout=10)
-    response.raise_for_status()
-    payload = response.json()
-    return payload.get("code") == 0 and payload.get("data", {}).get("refresh", False)
-
-
-def load_authorized_session(proxy_url=None):
-    """读取登录会话，并验证直接请求所需的 Cookie。"""
-    cookie_header = load_session().get("cookie_header", "")
-    if not cookie_header:
-        raise RuntimeError("请先运行 qr_login.py 完成二维码登录。")
-    session = create_session(cookie_header, proxy_url=proxy_url)
-    missing_login = [name for name in ("SESSDATA", "bili_jct") if not get_cookie_value(session, name)]
-    if missing_login:
-        raise RuntimeError(f"直接 API 会话缺少登录 Cookie：{', '.join(missing_login)}。请重新运行 qr_login.py。")
-    try:
-        missing_device = ensure_device_cookies(session)
-    except requests.RequestException as error:
-        raise RuntimeError(f"自动补齐设备 Cookie 失败：{error}") from error
-    if missing_device:
-        raise RuntimeError(f"直接 API 会话缺少设备 Cookie，自动补齐未完成：{', '.join(missing_device)}。请重新运行 qr_login.py。")
-    return session
-
-
-def refresh_authorization(session):
-    """在每轮扫描前刷新 ticket 与 WBI 密钥。"""
-    if check_cookie_refresh(session):
-        raise RuntimeError("当前 Cookie 需要刷新，请重新运行 qr_login.py。")
-    get_bili_ticket(session)
-    return get_wbi_keys(session)

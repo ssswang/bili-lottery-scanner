@@ -11,14 +11,13 @@ from datetime import datetime
 import requests
 import winsound
 
-from auth_manager import (
+from auth.api_auth import (
     create_session,
     ensure_device_cookies,
     generate_and_set_buvid_fp,
     get_device_profile,
     get_cookie_value,
     get_wbi_keys,
-    load_saved_sessions,
     set_client_identity_cookies,
 )
 from b_api import request_lottery_info
@@ -33,6 +32,7 @@ from config import (
     SCAN_HOT_RANK,
     SCAN_POPULAR_RANKS,
 )
+from auth.user_auth import load_saved_sessions
 from discord_notifier import DiscordNotifier
 from risk_control import RiskControlHandler
 from room_lists import RoomListBuilder

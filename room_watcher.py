@@ -11,7 +11,7 @@ from datetime import datetime
 
 import requests
 
-from auth_manager import (
+from auth.api_auth import (
     USER_AGENT,
     build_cookie_header,
     create_session,
@@ -19,17 +19,15 @@ from auth_manager import (
     generate_and_set_buvid_fp,
     get_cookie_value,
     get_device_profile,
-    get_wbi_keys,
-    load_saved_sessions,
-    request_bilibili,
     set_client_identity_cookies,
-    sign_wbi,
 )
 from config import (
     ANCHOR_LOTTERY_MIN_AVERAGE,
     PROCESS_ANCHOR_LOTTERY,
     RED_PACKET_MIN_AVERAGE,
 )
+from auth.ws_auth import RiskControlError, get_danmu_info
+from auth.user_auth import load_saved_sessions
 
 try:
     import websocket
@@ -42,7 +40,6 @@ except ImportError:
     brotli = None
 
 
-DANMU_INFO_URL = "https://api.live.bilibili.com/xlive/web-room/v1/index/getDanmuInfo"
 HEADER_LENGTH = 16
 OP_HEARTBEAT = 2
 OP_MESSAGE = 5
@@ -55,10 +52,6 @@ RED_PACKET_COMMANDS = {
 ANCHOR_LOTTERY_COMMANDS = {
     "ANCHOR_LOT_START": "天选开始",
 }
-
-
-class RiskControlError(RuntimeError):
-    """接口明确返回 -352 时使用，避免短间隔重复请求。"""
 
 
 def build_packet(body, operation, protover=1):
@@ -159,34 +152,6 @@ def get_account_session(account_name):
             f"账号 {account_name} 缺少设备 Cookie：{', '.join(missing)}；请重新扫码登录。"
         )
     return session
-
-
-def get_danmu_info(session, room_id, wbi_keys=None):
-    """获取当前房间专用 token 与可用 WebSocket 服务器列表。"""
-    # 2026 年该接口已要求 WBI 签名；只传 id/type 会返回 -352。
-    img_key, sub_key = wbi_keys or get_wbi_keys(session)
-    params = sign_wbi(
-        {"id": room_id, "type": 0, "web_location": "444.8"}, img_key, sub_key
-    )
-    response = request_bilibili(
-        session,
-        "get",
-        DANMU_INFO_URL,
-        params=params,
-        headers={"Referer": f"https://live.bilibili.com/{room_id}"},
-        timeout=10,
-    )
-    response.raise_for_status()
-    payload = response.json()
-    if payload.get("code") == -352:
-        raise RiskControlError(
-            "getDanmuInfo 返回 -352 风控校验失败；监听将在 60 秒后再尝试。"
-        )
-    data = payload.get("data", {}) if payload.get("code") == 0 else {}
-    token, hosts = data.get("token"), data.get("host_list") or []
-    if not token or not hosts:
-        raise RuntimeError(f"获取直播 WebSocket 鉴权信息失败：{payload.get('message', payload)}")
-    return token, hosts
 
 
 def red_packet_summary(command):

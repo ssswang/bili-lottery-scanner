@@ -4,11 +4,13 @@ proxy/proxies.txt
 scan_log.txt
 scan_anon_log.txt
 *.json
-qr_login.png
+data/qr_login.png
 /proxy/__pycache__
 README.zh-CN.md
 scan.zip
-red_packet_monitor.db
-red_packet_monitor.db-shm
-red_packet_monitor.db-wal
+data/red_packet_monitor.db
+data/red_packet_monitor.db-shm
+data/red_packet_monitor.db-wal
+data/*.json
 test_ws_token_reuse.py
+/auth/__pycache__

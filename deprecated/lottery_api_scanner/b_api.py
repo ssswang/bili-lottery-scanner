@@ -5,7 +5,7 @@ import argparse
 
 import requests
 
-from auth_manager import (
+from auth.api_auth import (
     build_anonymous_session,
     get_wbi_keys,
     request_bilibili,
@@ -71,10 +71,9 @@ def request_popular_anchor_rank(session, area_id, parent_area_id, rank_type, wbi
 def main():
     parser = argparse.ArgumentParser(description="直接请求 getLotteryInfoWeb，不启动浏览器")
     parser.add_argument("room_id", help="直播间房间号")
-    parser.add_argument("--proxy", default=None, help="可选代理地址，如 http://1.2.3.4:8080")
     args = parser.parse_args()
     try:
-        session = build_anonymous_session(proxy_url=args.proxy)
+        session = build_anonymous_session()
         wbi_keys = get_wbi_keys(session)
         payload = request_lottery_info(session, args.room_id, wbi_keys)
     except requests.RequestException as error:

@@ -13,8 +13,8 @@ class LocalDatabase:
 
     def __init__(self, database_path=None):
         path = Path(database_path) if database_path else Path(__file__).with_name(
-            "red_packet_monitor.db"
-        )
+            "data"
+        ) / "red_packet_monitor.db"
         self.path = path
         self._lock = threading.Lock()
         self._connection = sqlite3.connect(path, check_same_thread=False)
