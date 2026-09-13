@@ -8,7 +8,7 @@ from pathlib import Path
 import time
 
 # 归档脚本仍复用项目根目录的 Discord 配置与通知器。
-PROJECT_ROOT = Path(__file__).resolve().parents[2]
+PROJECT_ROOT = Path(__file__).resolve().parents[3]
 if str(PROJECT_ROOT) not in sys.path:
     sys.path.insert(0, str(PROJECT_ROOT))
 
@@ -17,7 +17,7 @@ from playwright.sync_api import TimeoutError as PlaywrightTimeoutError
 from playwright.sync_api import sync_playwright
 import requests
 
-from discord_notifier import DiscordNotifier
+from backend.discord_notifier import DiscordNotifier
 
 
 APP_HOT_RANK_URL = "https://live.bilibili.com/p/html/live-app-hotrank/index.html#/v2"

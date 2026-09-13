@@ -16,13 +16,13 @@ try:
 except ImportError as error:
     raise SystemExit("缺少 aiohttp。请执行：pip install -r requirements.txt") from error
 
-from auth.api_auth import USER_AGENT, build_cookie_header, get_cookie_value, get_wbi_keys
-from config import ANCHOR_LOTTERY_MIN_AVERAGE, PROCESS_ANCHOR_LOTTERY, RED_PACKET_MIN_AVERAGE, RISK_BACKOFF_SECONDS, ROOM_BLACKLIST
-from discord_notifier import DiscordNotifier
-from local_database import LocalDatabase
-from room_lists import RoomListBuilder
-from room_watcher import ANCHOR_LOTTERY_COMMANDS, OP_AUTH, OP_HEARTBEAT, RED_PACKET_COMMANDS, anchor_lottery_details, anchor_lottery_summary, build_packet, build_wss_url, get_account_session, parse_auth_reply, parse_packets, red_packet_average, red_packet_summary
-from auth.ws_auth import RiskControlError, get_danmu_info
+from backend.auth.api_auth import USER_AGENT, build_cookie_header, get_cookie_value, get_wbi_keys
+from backend.config import ANCHOR_LOTTERY_MIN_AVERAGE, PROCESS_ANCHOR_LOTTERY, RED_PACKET_MIN_AVERAGE, RISK_BACKOFF_SECONDS, ROOM_BLACKLIST
+from backend.discord_notifier import DiscordNotifier
+from backend.database import LocalDatabase
+from backend.room_lists import RoomListBuilder
+from backend.room_watcher import ANCHOR_LOTTERY_COMMANDS, OP_AUTH, OP_HEARTBEAT, RED_PACKET_COMMANDS, anchor_lottery_details, anchor_lottery_summary, build_packet, build_wss_url, get_account_session, parse_auth_reply, parse_packets, red_packet_average, red_packet_summary
+from backend.auth.ws_auth import RiskControlError, get_danmu_info
 
 
 MAX_HIGH_ENERGY_USERS = 500

@@ -11,7 +11,7 @@ from datetime import datetime
 
 import requests
 
-from auth.api_auth import (
+from backend.auth.api_auth import (
     USER_AGENT,
     build_cookie_header,
     create_session,
@@ -21,13 +21,13 @@ from auth.api_auth import (
     get_device_profile,
     set_client_identity_cookies,
 )
-from config import (
+from backend.config import (
     ANCHOR_LOTTERY_MIN_AVERAGE,
     PROCESS_ANCHOR_LOTTERY,
     RED_PACKET_MIN_AVERAGE,
 )
-from auth.ws_auth import RiskControlError, get_danmu_info
-from auth.user_auth import load_saved_sessions
+from backend.auth.ws_auth import RiskControlError, get_danmu_info
+from backend.auth.user_auth import load_saved_sessions
 
 try:
     import websocket
@@ -133,7 +133,7 @@ def get_account_session(account_name):
         available = "、".join(accounts) or "无"
         raise RuntimeError(
             f"未找到账号 {account_name} 的会话（可用：{available}）。"
-            "请先运行 qr_login.py --name " + account_name
+            "请先运行 python -m backend.qr_login --name " + account_name
         )
     session = create_session(cookie_header)
     session.trust_env = False

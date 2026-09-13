@@ -5,7 +5,7 @@ import argparse
 
 import requests
 
-from auth.api_auth import (
+from backend.auth.api_auth import (
     build_anonymous_session,
     get_wbi_keys,
     request_bilibili,

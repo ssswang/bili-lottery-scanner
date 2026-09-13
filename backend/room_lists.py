@@ -5,7 +5,7 @@ import time
 
 import requests
 
-from auth.api_auth import USER_AGENT, request_bilibili, sign_wbi
+from backend.auth.api_auth import USER_AGENT, request_bilibili, sign_wbi
 
 
 HOT_RANK_API_URL = "https://api.live.bilibili.com/xlive/web-interface/v1/index/getHotRankList"

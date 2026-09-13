@@ -10,7 +10,7 @@ from urllib.parse import parse_qsl, urlparse
 import requests
 
 
-PROJECT_ROOT = Path(__file__).resolve().parent.parent
+PROJECT_ROOT = Path(__file__).resolve().parent.parent.parent
 DATA_DIR = PROJECT_ROOT / "data"
 SESSION_PATH = DATA_DIR / "lotteryapi_session.json"
 QR_IMAGE_PATH = DATA_DIR / "qr_login.png"
@@ -203,11 +203,11 @@ def load_authorized_session():
     """读取已登录账号的会话，并校验必要的登录 Cookie。"""
     cookie_header = load_session().get("cookie_header", "")
     if not cookie_header:
-        raise RuntimeError("请先运行 qr_login.py 完成二维码登录。")
+        raise RuntimeError("请先运行 python -m backend.qr_login 完成二维码登录。")
     session = _create_session(cookie_header)
     missing_login = [name for name in ("SESSDATA", "bili_jct") if not _get_cookie_value(session, name)]
     if missing_login:
-        raise RuntimeError(f"登录会话缺少 Cookie：{', '.join(missing_login)}。请重新运行 qr_login.py。")
+        raise RuntimeError(f"登录会话缺少 Cookie：{', '.join(missing_login)}。请重新运行 python -m backend.qr_login。")
     return session
 
 

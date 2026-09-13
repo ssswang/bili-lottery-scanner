@@ -11,7 +11,7 @@ from datetime import datetime
 import requests
 import winsound
 
-from auth.api_auth import (
+from backend.auth.api_auth import (
     create_session,
     ensure_device_cookies,
     generate_and_set_buvid_fp,
@@ -21,7 +21,7 @@ from auth.api_auth import (
     set_client_identity_cookies,
 )
 from b_api import request_lottery_info
-from config import (
+from backend.config import (
     HOT_RANK_LIMIT,
     BEEP_ENABLED,
     PROCESS_ANCHOR_LOTTERY,
@@ -32,10 +32,10 @@ from config import (
     SCAN_HOT_RANK,
     SCAN_POPULAR_RANKS,
 )
-from auth.user_auth import load_saved_sessions
-from discord_notifier import DiscordNotifier
+from backend.auth.user_auth import load_saved_sessions
+from backend.discord_notifier import DiscordNotifier
 from risk_control import RiskControlHandler
-from room_lists import RoomListBuilder
+from backend.room_lists import RoomListBuilder
 
 
 def alert_beep():
@@ -315,7 +315,7 @@ def main():
         help="每个房间请求之间的秒数，最低为 3",
     )
     parser.add_argument(
-        "--discord-webhook", default=None, help="临时覆盖 config.txt 中的 Discord Webhook"
+        "--discord-webhook", default=None, help="临时覆盖 backend/config.txt 中的 Discord Webhook"
     )
     parser.add_argument(
         "--red-threshold", type=float, default=RED_ALERT_AVG_THRESHOLD, help="红包包均告警阈值"

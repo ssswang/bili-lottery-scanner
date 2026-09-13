@@ -35,10 +35,10 @@ Or run `install.bat` to install the dependencies interactively.
 Copy the sample configuration:
 
 ```bat
-copy config.txt.sample config.txt
+copy config.txt.sample backend\config.txt
 ```
 
-Edit `config.txt`. A minimal configuration is:
+Edit `backend/config.txt`. A minimal configuration is:
 
 ```ini
 RISK_BACKOFF_SECONDS=60
@@ -56,14 +56,14 @@ DISCORD_ENABLED=1
 DISCORD_WEBHOOK="https://discord.com/api/webhooks/..."
 ```
 
-`config.txt`, the login session, and the QR image are excluded from Git. The saved login session contains sensitive Cookies; do not share or commit it.
+`backend/config.txt`, the login session, and the QR image are excluded from Git. The saved login session contains sensitive Cookies; do not share or commit it.
 
 ## Login
 
 The monitor requires only `acct1`:
 
 ```bat
-python qr_login.py --name acct1
+python -m backend.qr_login --name acct1
 ```
 
 Alternatively, double-click `qr_login_acct1.bat`.
@@ -73,7 +73,7 @@ Login generates and opens `data/qr_login.png`. Use the **Scan** feature in the B
 ## Start WS rank monitoring
 
 ```bat
-python list_scanner.py --account acct1
+python -m backend.list_scanner --account acct1
 ```
 
 The scanner continuously performs the following steps:
@@ -83,52 +83,65 @@ The scanner continuously performs the following steps:
 3. Prints a packet only when its average value is at least 10 batteries.
 4. Refreshes the ranking list every three minutes and updates the monitored rooms.
 
-## Live WebSocket red-packet watcher
+## Local red-packet dashboard
 
-`room_watcher.py` keeps one WebSocket connection open for a selected live room and prints qualifying real-time red-packet start events. It reuses a named QR-login session and reconnects safely after a transient disconnect.
+While the scanner is running, start the read-only local dashboard in a second terminal:
 
 ```bat
-python room_watcher.py 1700657229 --account acct1
+python backend\dashboard.py
 ```
 
-Run `room_watcher.bat` for an interactive Windows launcher. Install the newly added dependencies once with `pip install -r requirements.txt`.
+It opens `http://127.0.0.1:8765`, shows packets recorded in the last 24 hours, and refreshes the active and expired queues every two seconds. It reads only `data/red_packet_monitor.db` and does not affect scanning.
+
+## Live WebSocket red-packet watcher
+
+`backend/room_watcher.py` keeps one WebSocket connection open for a selected live room and prints qualifying real-time red-packet start events. It reuses a named QR-login session and reconnects safely after a transient disconnect.
+
+```bat
+python -m backend.room_watcher 1700657229 --account acct1
+```
+
+Install the required dependencies once with `pip install -r requirements.txt`.
 
 ### WebSocket category-rank red-packet scanner
 
-`list_scanner.py` combines Hot Rank and configured category-ranking sources with the WebSocket watcher, deduplicating rooms by ID. It starts rooms with cached WebSocket credentials first, so rooms waiting for `getDanmuInfo` do not delay them. It evaluates `POPULARITY_RED_POCKET_START` for qualifying red packets and can optionally observe `ANCHOR_LOT_START` events when `PROCESS_ANCHOR_LOTTERY=1` is set in `config.txt` (off by default). It refreshes the rankings every three minutes and adds newly discovered rooms to monitoring. The red-packet and anchor-lottery average thresholds are controlled by `RED_PACKET_MIN_AVERAGE` and `ANCHOR_LOTTERY_MIN_AVERAGE`, both defaulting to 10 batteries. It does not poll `getLotteryInfoWeb`.
+`backend/list_scanner.py` combines Hot Rank and configured category-ranking sources with the WebSocket watcher, deduplicating rooms by ID. It starts rooms with cached WebSocket credentials first, so rooms waiting for `getDanmuInfo` do not delay them. It evaluates `POPULARITY_RED_POCKET_START` for qualifying red packets and can optionally observe `ANCHOR_LOT_START` events when `PROCESS_ANCHOR_LOTTERY=1` is set in `backend/config.txt` (off by default). It refreshes the rankings every three minutes and adds newly discovered rooms to monitoring. The red-packet and anchor-lottery average thresholds are controlled by `RED_PACKET_MIN_AVERAGE` and `ANCHOR_LOTTERY_MIN_AVERAGE`, both defaulting to 10 batteries. It does not poll `getLotteryInfoWeb`.
 
 ```bat
-python list_scanner.py --account acct1 --hot-rank-limit 100 --min-average 10
+python -m backend.list_scanner --account acct1 --hot-rank-limit 100 --min-average 10
 ```
 
 Use `list_scanner.bat` for the default Windows launcher.
 
-Set `DISCORD_ENABLED=1` and `DISCORD_WEBHOOK` in `config.txt` to send qualifying red-packet events to Discord. Alternatively, provide a one-run webhook with `--discord-webhook "https://discord.com/api/webhooks/..."`.
+Set `DISCORD_ENABLED=1` and `DISCORD_WEBHOOK` in `backend/config.txt` to send qualifying red-packet events to Discord. Alternatively, provide a one-run webhook with `--discord-webhook "https://discord.com/api/webhooks/..."`.
 
 
 ## Risk control and troubleshooting
 
 - A `-352` response pauses the affected token request before retrying. Do not repeatedly restart the monitor while this is happening.
-- If the login expires or `-352` persists, log in again with `python qr_login.py --name acct1` and complete any required verification in the B Zhan app or website.
+- If the login expires or `-352` persists, log in again with `python -m backend.qr_login --name acct1` and complete any required verification in the B Zhan app or website.
 - This tool does not automate captchas, `v_voucher`, or other manual verification.
 - The login QR code must be scanned with the B Zhan mobile app. Do not open the QR URL directly in a phone browser.
 
 ## Project structure
 
 ```text
-qr_login.py             Named-account QR login launcher
+backend/qr_login.py     Named-account QR login launcher
 qr_login_acct1.bat      Windows launcher for acct1 QR login
-config.py               config.txt parsing and default values
-auth/api_auth.py        API/WBI signing, device identity, ticket refresh, and rate limiting
-auth/user_auth.py       Saved user sessions and QR-login entry points
-auth/ws_auth.py         getDanmuInfo token retrieval and -352 handling
+backend/config.py       config.txt parsing and default values
+backend/auth/api_auth.py API/WBI signing, device identity, ticket refresh, and rate limiting
+backend/auth/user_auth.py Saved user sessions and QR-login entry points
+backend/auth/ws_auth.py  getDanmuInfo token retrieval and -352 handling
 data/                   Reserved local data directory (database and session artifacts)
-room_lists.py           Rank-source room collection, normalization, and combined-list building
-discord_notifier.py     Discord notifications
-list_scanner.py                 Category-rank WebSocket red-packet monitor
-list_scanner.bat                Windows launcher for the WS monitor
-room_watcher.py                 Single-room WebSocket event watcher
-room_watcher.bat                Windows launcher for the single-room watcher
+backend/database.py     SQLite persistence layer
+backend/discord_notifier.py  Discord notification service
+backend/dashboard.py    Local dashboard HTTP service
+web/index.html          Dashboard page
+backend/room_lists.py   Rank-source room collection, normalization, and combined-list building
+backend/list_scanner.py         Category-rank WebSocket red-packet monitor
+list_scanner_acct1.bat          Windows launcher for the WS monitor
+dashboard.bat                   Windows launcher for the local dashboard
+backend/room_watcher.py         Single-room WebSocket event watcher
 test_ws_token_reuse.py          WebSocket token reuse test
-config.txt.sample       Sample configuration
+config.txt.sample       Sample configuration; copy to backend/config.txt
 ```

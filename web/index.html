@@ -1,0 +1,60 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>红包队列</title>
+  <style>
+    :root { --bg: #f7f8fc; --panel: #fff; --line: #e3e7f0; --text: #182033; --muted: #6c778c; --accent: #ef476f; --good: #06b789; --purple: #7457e8; --yellow: #ffb703; }
+    * { box-sizing: border-box; }
+    body { margin: 0; min-width: 320px; color: var(--text); background: linear-gradient(120deg, #fff4f5 0, var(--bg) 42%, #f0f5ff 100%); font-family: "Microsoft YaHei", system-ui, sans-serif; }
+    header { max-width: 1380px; margin: auto; padding: 30px 24px 20px; display: flex; align-items: end; justify-content: space-between; gap: 16px; }
+    h1 { margin: 0; font-size: clamp(31px, 4vw, 45px); letter-spacing: -.05em; } h1 span { color: var(--accent); }
+    .subtitle, .updated { color: var(--muted); font-size: 16px; margin-top: 8px; } .updated { text-align: right; }
+    main { max-width: 1380px; margin: auto; padding: 0 24px 40px; display: grid; grid-template-columns: minmax(0, 1.1fr) minmax(330px, .9fr); gap: 20px; }
+    section { min-width: 0; background: var(--panel); border: 1px solid var(--line); border-radius: 20px; overflow: hidden; box-shadow: 0 10px 30px #263b6a12; }
+    .section-head { padding: 20px 22px; display: flex; align-items: center; justify-content: space-between; border-bottom: 1px solid var(--line); } h2 { margin: 0; font-size: 22px; } .count { color: var(--muted); font-size: 16px; font-weight: 600; }
+    .queue { padding: 12px; display: grid; gap: 10px; max-height: calc(100vh - 180px); overflow-y: auto; }
+    .card { border: 1px solid #dde4f0; border-radius: 15px; padding: 17px; background: #fff; box-shadow: 0 3px 11px #2736540c; } .card.active { border-left: 6px solid var(--good); background: linear-gradient(110deg, #f1fffa, #fff); } .card.active:nth-child(3n+2) { border-left-color: var(--purple); background: linear-gradient(110deg, #f7f4ff, #fff); } .card.active:nth-child(3n) { border-left-color: var(--yellow); background: linear-gradient(110deg, #fff9e9, #fff); }
+    .card.expired { background: #f7f8fb; border-left: 6px solid #aeb8c8; }
+    .topline { display: flex; justify-content: space-between; align-items: start; gap: 8px; } .name { font-size: 21px; font-weight: 750; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; } .room { color: #3c64c7; text-decoration: none; font-size: 15px; font-weight: 600; white-space: nowrap; }
+    .timer { margin: 14px 0 11px; color: var(--good); font-size: 30px; font-weight: 800; letter-spacing: .02em; } .expired .timer { color: #77849a; }
+    .award { line-height: 1.55; font-size: 17px; color: #33405a; } .meta { display: flex; flex-wrap: wrap; gap: 7px; margin-top: 14px; }
+    .tag { padding: 5px 9px; border-radius: 7px; background: #edf1f8; color: #536177; font-size: 14px; font-weight: 600; } .tag.value { color: #9b5600; background: #fff0ca; }
+    .empty { padding: 40px 12px; text-align: center; color: var(--muted); font-size: 17px; } .error { margin: 0 24px 18px; color: #c43555; font-size: 16px; }
+    @media (max-width: 820px) { header { align-items: start; flex-direction: column; } .updated { text-align: left; } main { grid-template-columns: 1fr; } .queue { max-height: none; } }
+  </style>
+</head>
+<body>
+  <header>
+    <div><h1><span>🧧</span> 红包队列</h1><div class="subtitle">扫描器提示的红包 · 本地近实时更新</div></div>
+    <div class="updated" id="updated">正在连接本地数据库…</div>
+  </header>
+  <p class="error" id="error" hidden></p>
+  <main>
+    <section><div class="section-head"><h2>进行中</h2><span class="count" id="active-count">0 个红包</span></div><div class="queue" id="active"></div></section>
+    <section><div class="section-head"><h2>已过期</h2><span class="count" id="expired-count">0 个红包</span></div><div class="queue" id="expired"></div></section>
+  </main>
+  <script>
+    const requirement = text => text || '无要求';
+    const formatTime = time => time ? new Date(time * 1000).toLocaleString('zh-CN', { hour12: false }) : '未知时间';
+    const countdown = (end, now) => { const seconds = Math.max(0, end - now); const m = Math.floor(seconds / 60), s = seconds % 60; return seconds ? `${m}:${String(s).padStart(2, '0')} 后开奖` : '已过期'; };
+    function card(packet, now, expired) {
+      const room = encodeURIComponent(packet.room_id); const host = escapeHtml(packet.host_name || '未知主播');
+      return `<article class="card ${expired ? 'expired' : 'active'}"><div class="topline"><div class="name">${host}</div><a class="room" href="https://live.bilibili.com/${room}" target="_blank" rel="noreferrer">房间 ${escapeHtml(packet.room_id)}</a></div><div class="timer" data-end="${packet.end_time}">${countdown(packet.end_time, now)}</div><div class="award">🎁 ${escapeHtml(packet.awards)}</div><div class="meta"><span class="tag value">包均 ${Number(packet.average_value).toFixed(2)} 电池</span><span class="tag">总价值 ${packet.total_price} 电池</span><span class="tag">${requirement(packet.requirement)}</span><span class="tag">${packet.award_count || 0} 份</span><span class="tag">开奖 ${formatTime(packet.end_time)}</span></div></article>`;
+    }
+    function escapeHtml(value) { const el = document.createElement('span'); el.textContent = value ?? ''; return el.innerHTML; }
+    function renderQueue(id, packets, now, expired) { document.getElementById(id).innerHTML = packets.length ? packets.map(item => card(item, now, expired)).join('') : `<div class="empty">${expired ? '还没有已过期红包' : '当前没有等待开奖的红包'}</div>`; }
+    async function refresh() {
+      try {
+        const response = await fetch('/api/red-packets', { cache: 'no-store' }); const data = await response.json();
+        document.getElementById('error').hidden = !data.error; document.getElementById('error').textContent = data.error || '';
+        renderQueue('active', data.active, data.now, false); renderQueue('expired', data.expired, data.now, true);
+        document.getElementById('active-count').textContent = `${data.active.length} 个红包`; document.getElementById('expired-count').textContent = `${data.expired.length} 个红包`;
+        document.getElementById('updated').textContent = `每 2 秒更新 · ${new Date().toLocaleTimeString('zh-CN', { hour12: false })}`;
+      } catch (error) { document.getElementById('updated').textContent = '无法连接仪表盘服务'; }
+    }
+    refresh(); setInterval(refresh, 2000);
+  </script>
+</body>
+</html>

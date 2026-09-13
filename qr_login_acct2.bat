@@ -1,3 +1,4 @@
-@echo off 
-python qr_login.py --name acct2 
+@echo off
+cd /d "%~dp0"
+python -m backend.qr_login --name acct2
 pause

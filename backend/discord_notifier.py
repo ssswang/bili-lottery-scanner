@@ -5,7 +5,7 @@ from datetime import datetime
 
 import requests
 
-from config import DISCORD_ENABLED, DISCORD_WEBHOOK
+from backend.config import DISCORD_ENABLED, DISCORD_WEBHOOK
 
 
 class DiscordNotifier:

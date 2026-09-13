@@ -3,7 +3,7 @@
 
 import argparse
 
-from auth.user_auth import qr_login_main
+from backend.auth.user_auth import qr_login_main
 
 
 def main():

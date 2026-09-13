@@ -21,7 +21,7 @@ NAVIGATE_API_URL = "https://api.live.bilibili.com/room/v2/Index/getNavigate"
 EX_CLIMB_WUZHI_URL = "https://api.bilibili.com/x/internal/gaia-gateway/ExClimbWuzhi"
 HOME_PAGE_URL = "https://www.bilibili.com/"
 FINGERPRINT_API_URL = "https://api.bilibili.com/x/frontend/finger/spi"
-PROJECT_ROOT = Path(__file__).resolve().parent.parent
+PROJECT_ROOT = Path(__file__).resolve().parent.parent.parent
 DATA_DIR = PROJECT_ROOT / "data"
 ANON_IDENTITIES_PATH = DATA_DIR / "anonymous_identities.json"
 USER_AGENT = (
@@ -454,4 +454,3 @@ def sign_wbi(params, img_key, sub_key):
     query = urlencode(sorted(signed.items()), quote_via=quote, safe="")
     signed["w_rid"] = hashlib.md5(f"{query}{mixin_key}".encode("utf-8")).hexdigest()
     return signed
-
