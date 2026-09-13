@@ -20,8 +20,8 @@ from backend.auth.api_auth import USER_AGENT, build_cookie_header, get_cookie_va
 from backend.config import ANCHOR_LOTTERY_MIN_AVERAGE, PROCESS_ANCHOR_LOTTERY, RED_PACKET_MIN_AVERAGE, RISK_BACKOFF_SECONDS, ROOM_BLACKLIST
 from backend.discord_notifier import DiscordNotifier
 from backend.database import LocalDatabase
-from backend.room_lists import RoomListBuilder
-from backend.room_watcher import ANCHOR_LOTTERY_COMMANDS, OP_AUTH, OP_HEARTBEAT, RED_PACKET_COMMANDS, anchor_lottery_details, anchor_lottery_summary, build_packet, build_wss_url, get_account_session, parse_auth_reply, parse_packets, red_packet_average, red_packet_summary
+from backend.area_room_queue import AreaRoomQueueBuilder
+from backend.room_watcher import ANCHOR_LOTTERY_COMMANDS, OP_AUTH, OP_HEARTBEAT, RED_PACKET_COMMANDS, ROOM_STOP_COMMANDS, anchor_lottery_details, anchor_lottery_summary, build_packet, build_wss_url, get_account_session, parse_auth_reply, parse_packets, red_packet_average, red_packet_summary
 from backend.auth.ws_auth import RiskControlError, get_danmu_info
 
 
@@ -126,9 +126,9 @@ def exceeds_room_activity_limit(name, command):
         return False
 
 
-def build_rank_rooms(session, hot_rank_limit):
+def build_area_rooms(session):
     wbi_keys = get_wbi_keys(session)
-    rooms = RoomListBuilder(session, wbi_keys, hot_rank_limit=hot_rank_limit).build(include_hot_rank=True, include_popular_ranks=True)
+    rooms = AreaRoomQueueBuilder(session).build()
     return [room for room in rooms if room["room_id"] not in ROOM_BLACKLIST], wbi_keys
 
 
@@ -141,7 +141,8 @@ class AsyncListScanner:
         self.connection_slots = asyncio.Semaphore(args.max_active_rooms)
         self.rate_limiter = AsyncDanmuInfoRateLimiter(args.max_get_danmu_info_per_minute, jitter_seconds=args.get_danmu_info_jitter)
         self.stats, self.wbi_keys = ConnectionStats(), None
-        self.room_tasks, self.closed_room_ids, self.notified_lot_ids = {}, set(), set()
+        self.room_queue, self.queued_room_ids = asyncio.Queue(), set()
+        self.room_workers, self.closed_room_ids, self.notified_lot_ids = [], set(), set()
         self.database_queue, self.notification_queue = asyncio.Queue(), asyncio.Queue()
 
     async def database_worker(self):
@@ -192,6 +193,22 @@ class AsyncListScanner:
 
     async def invalidate_cache(self, room_id):
         await asyncio.to_thread(self.database.delete_ws_auth_cache, self.args.account, room_id)
+
+    async def queue_worker(self, worker_number):
+        """从待处理队列取房间；一个工作协程在房间停止监听后再处理下一项。"""
+        while not self.stop_event.is_set():
+            room = await self.room_queue.get()
+            room_id = room["room_id"]
+            try:
+                if room_id not in self.closed_room_ids:
+                    await self.watch_room(room)
+            except asyncio.CancelledError:
+                raise
+            except Exception as error:
+                log(f"⚠️ 队列工作协程 {worker_number} | 房间 {room_id} 异常：{error}")
+            finally:
+                self.queued_room_ids.discard(room_id)
+                self.room_queue.task_done()
 
     async def enqueue_red_packet(self, room, command, average):
         data, room_id = command.get("data") or {}, room["room_id"]
@@ -282,7 +299,7 @@ class AsyncListScanner:
                             continue
                         for command in parse_packets(raw):
                             name = command.get("cmd", "").split(":", 1)[0]
-                            if name in {"PREPARING", "CUT_OFF"} or exceeds_room_activity_limit(name, command):
+                            if name in ROOM_STOP_COMMANDS or exceeds_room_activity_limit(name, command):
                                 self.closed_room_ids.add(room_id)
                                 return
                             if name in RED_PACKET_COMMANDS:
@@ -334,32 +351,34 @@ class AsyncListScanner:
             await asyncio.sleep(self.args.reconnect_delay)
 
     async def refresh_rooms(self):
-        rooms, self.wbi_keys = await asyncio.to_thread(build_rank_rooms, self.session, self.args.hot_rank_limit)
+        rooms, self.wbi_keys = await asyncio.to_thread(build_area_rooms, self.session)
         current_ids = {room["room_id"] for room in rooms}
         self.closed_room_ids.intersection_update(current_ids)
-        for room_id, task in list(self.room_tasks.items()):
-            if task.done():
-                self.room_tasks.pop(room_id, None)
         cached, uncached = [], []
         for room in rooms:
             room_id = room["room_id"]
-            if room_id in self.room_tasks or room_id in self.closed_room_ids:
+            if room_id in self.queued_room_ids or room_id in self.closed_room_ids:
                 continue
             (cached if await self.load_cache(room_id) else uncached).append(room)
         for room in cached + uncached:
-            self.room_tasks[room["room_id"]] = asyncio.create_task(self.watch_room(room), name=f"ws-room-{room['room_id']}")
-        log(f"📊 本轮新增：缓存鉴权 {len(cached)}，待取鉴权 {len(uncached)} | 实际连接 {self.stats.active}，管理房间 {len(self.room_tasks)} | 鉴权确认 {self.stats.auth_confirmed}（缓存成功 {self.stats.cached_auth_confirmed}，缓存失败 {self.stats.cached_auth_failed}，超时 {self.stats.auth_timeouts}） | getDanmuInfo 累计 {self.stats.danmu_info_requests} 次。")
+            self.queued_room_ids.add(room["room_id"])
+            self.room_queue.put_nowait(room)
+        log(f"📊 父分区队列：本轮新增 缓存鉴权 {len(cached)}，待取鉴权 {len(uncached)} | 队列待处理 {self.room_queue.qsize()}，已分配 {len(self.queued_room_ids)} | 实际连接 {self.stats.active} | 鉴权确认 {self.stats.auth_confirmed}（缓存成功 {self.stats.cached_auth_confirmed}，缓存失败 {self.stats.cached_auth_failed}，超时 {self.stats.auth_timeouts}） | getDanmuInfo 累计 {self.stats.danmu_info_requests} 次。")
 
     async def run(self):
         database_task, notification_task = asyncio.create_task(self.database_worker()), asyncio.create_task(self.notification_worker())
         self.ws_session = aiohttp.ClientSession(connector=aiohttp.TCPConnector(limit=0, ttl_dns_cache=300))
-        log(f"异步分区榜 WS 扫描已启动：账号 {self.args.account}，天选事件：{'开启' if PROCESS_ANCHOR_LOTTERY else '关闭'}。")
+        self.room_workers = [
+            asyncio.create_task(self.queue_worker(index + 1), name=f"room-queue-{index + 1}")
+            for index in range(self.args.max_active_rooms)
+        ]
+        log(f"异步父分区 WS 队列扫描已启动：账号 {self.args.account}，天选事件：{'开启' if PROCESS_ANCHOR_LOTTERY else '关闭'}。")
         try:
             while not self.stop_event.is_set():
                 try:
                     await self.refresh_rooms()
                 except (requests.RequestException, RuntimeError, OSError) as error:
-                    log(f"⚠️ 刷新分区榜失败：{error}；{RISK_BACKOFF_SECONDS} 秒后重试。")
+                    log(f"⚠️ 刷新父分区房间队列失败：{error}；{RISK_BACKOFF_SECONDS} 秒后重试。")
                     await asyncio.sleep(RISK_BACKOFF_SECONDS)
                     continue
                 try:
@@ -368,9 +387,9 @@ class AsyncListScanner:
                     pass
         finally:
             self.stop_event.set()
-            for task in self.room_tasks.values():
+            for task in self.room_workers:
                 task.cancel()
-            await asyncio.gather(*self.room_tasks.values(), return_exceptions=True)
+            await asyncio.gather(*self.room_workers, return_exceptions=True)
             await self.database_queue.join()
             await self.notification_queue.join()
             await self.database_queue.put(None)
@@ -384,7 +403,6 @@ def parse_args():
     parser = argparse.ArgumentParser(description="异步扫描直播榜单并监听红包与可选天选事件")
     parser.add_argument("--account", default="acct1")
     parser.add_argument("--refresh-seconds", type=int, default=180)
-    parser.add_argument("--hot-rank-limit", type=int, default=100)
     parser.add_argument("--reconnect-delay", type=int, default=10)
     parser.add_argument("--min-average", type=float, default=RED_PACKET_MIN_AVERAGE)
     parser.add_argument("--min-anchor-average", type=float, default=ANCHOR_LOTTERY_MIN_AVERAGE)
@@ -394,7 +412,7 @@ def parse_args():
     parser.add_argument("--get-danmu-info-jitter", type=float, default=1.5)
     parser.add_argument("--max-active-rooms", type=int, default=DEFAULT_MAX_ACTIVE_ROOMS)
     args = parser.parse_args()
-    if args.hot_rank_limit < 1 or args.refresh_seconds < 60 or args.reconnect_delay < 1 or args.min_average < 0 or args.min_anchor_average < 0 or args.max_get_danmu_info_per_minute < 1 or args.get_danmu_info_jitter < 0 or args.max_active_rooms < 1:
+    if args.refresh_seconds < 60 or args.reconnect_delay < 1 or args.min_average < 0 or args.min_anchor_average < 0 or args.max_get_danmu_info_per_minute < 1 or args.get_danmu_info_jitter < 0 or args.max_active_rooms < 1:
         parser.error("参数值无效")
     return args
 

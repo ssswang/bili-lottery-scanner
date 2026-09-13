@@ -5,8 +5,8 @@ A browser-free monitor for B Zhan live-stream red packets. It uses one official 
 ## Features
 
 - One required QR-login account: `acct1`.
-- Merges Hot Rank and category-ranking sources by room ID, then monitors every discovered room.
-- Refreshes the ranking list every three minutes; only rooms that go offline are disconnected.
+- Pages through every live room in parent areas 1, 5, and 9, deduplicates by room ID, and adds them to the monitoring queue.
+- Refreshes the parent-area room queue every three minutes; only rooms that go offline are disconnected.
 - Uses one `asyncio` event loop with `aiohttp` WebSockets, avoiding one Python thread per room; database writes and Discord notifications are handled by independent queues.
 - Keeps at most 2000 live WebSocket connections.
 - Disconnects rooms when their WebSocket reports more than 500 high-energy users or 10,000 cumulative viewers.
@@ -78,8 +78,8 @@ python -m backend.list_scanner --account acct1
 
 The scanner continuously performs the following steps:
 
-1. Uses `acct1` to refresh Hot Rank and category-ranking sources, deduplicating rooms before adding newly discovered rooms to monitoring.
-2. Gets a WebSocket token for each selected room and listens only for red-packet start events.
+1. Uses `acct1` to refresh every page of the parent-area room lists for areas 1, 5, and 9, then queues newly discovered rooms after deduplication.
+2. Uses cached WebSocket credentials first; uncached rooms obtain a token under the global rate limit and then listen for red-packet start events.
 3. Prints a packet only when its average value is at least 10 batteries.
 4. Refreshes the ranking list every three minutes and updates the monitored rooms.
 
@@ -105,10 +105,10 @@ Install the required dependencies once with `pip install -r requirements.txt`.
 
 ### WebSocket category-rank red-packet scanner
 
-`backend/list_scanner.py` combines Hot Rank and configured category-ranking sources with the WebSocket watcher, deduplicating rooms by ID. It starts rooms with cached WebSocket credentials first, so rooms waiting for `getDanmuInfo` do not delay them. It evaluates `POPULARITY_RED_POCKET_START` for qualifying red packets and can optionally observe `ANCHOR_LOT_START` events when `PROCESS_ANCHOR_LOTTERY=1` is set in `backend/config.txt` (off by default). It refreshes the rankings every three minutes and adds newly discovered rooms to monitoring. The red-packet and anchor-lottery average thresholds are controlled by `RED_PACKET_MIN_AVERAGE` and `ANCHOR_LOTTERY_MIN_AVERAGE`, both defaulting to 10 batteries. It does not poll `getLotteryInfoWeb`.
+`backend/list_scanner.py` pages through all live rooms in parent areas 1, 5, and 9, deduplicates them by room ID, and adds new rooms to the monitoring queue. It starts rooms with cached WebSocket credentials first, so rooms waiting for `getDanmuInfo` do not delay them. It evaluates `POPULARITY_RED_POCKET_START` for qualifying red packets and can optionally observe `ANCHOR_LOT_START` events when `PROCESS_ANCHOR_LOTTERY=1` is set in `backend/config.txt` (off by default). It refreshes the queue every three minutes. The red-packet and anchor-lottery average thresholds are controlled by `RED_PACKET_MIN_AVERAGE` and `ANCHOR_LOTTERY_MIN_AVERAGE`, both defaulting to 10 batteries. It does not poll `getLotteryInfoWeb`.
 
 ```bat
-python -m backend.list_scanner --account acct1 --hot-rank-limit 100 --min-average 10
+python -m backend.list_scanner --account acct1 --min-average 10
 ```
 
 Use `list_scanner.bat` for the default Windows launcher.
@@ -137,7 +137,7 @@ backend/database.py     SQLite persistence layer
 backend/discord_notifier.py  Discord notification service
 backend/dashboard.py    Local dashboard HTTP service
 web/index.html          Dashboard page
-backend/room_lists.py   Rank-source room collection, normalization, and combined-list building
+backend/area_room_queue.py Parent-area room queue source
 backend/list_scanner.py         Category-rank WebSocket red-packet monitor
 list_scanner_acct1.bat          Windows launcher for the WS monitor
 dashboard.bat                   Windows launcher for the local dashboard

@@ -35,7 +35,7 @@ from backend.config import (
 from backend.auth.user_auth import load_saved_sessions
 from backend.discord_notifier import DiscordNotifier
 from risk_control import RiskControlHandler
-from backend.room_lists import RoomListBuilder
+from room_lists import RoomListBuilder
 
 
 def alert_beep():

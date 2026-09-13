@@ -52,6 +52,7 @@ RED_PACKET_COMMANDS = {
 ANCHOR_LOTTERY_COMMANDS = {
     "ANCHOR_LOT_START": "天选开始",
 }
+ROOM_STOP_COMMANDS = frozenset({"PREPARING", "CUT_OFF", "STOP_LIVE_ROOM_LIST"})
 
 
 def build_packet(body, operation, protover=1):
@@ -328,6 +329,8 @@ def watch(room_id, account_name, reconnect_delay):
                 raw = message.encode("utf-8") if isinstance(message, str) else message
                 for command in parse_packets(raw):
                     name = command.get("cmd", "").split(":", 1)[0]
+                    if name in ROOM_STOP_COMMANDS:
+                        return
                     if name in RED_PACKET_COMMANDS:
                         average = red_packet_average(command)
                         if average is None or average < RED_PACKET_MIN_AVERAGE:

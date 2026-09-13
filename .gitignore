@@ -11,3 +11,4 @@ data/qr_login.png
 *.db
 *.db-shm
 *.db-wal
+backend/test_cached_ws_tokens.py
