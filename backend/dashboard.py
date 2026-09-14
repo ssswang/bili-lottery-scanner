@@ -34,15 +34,35 @@ def format_awards(raw_data):
     return "、".join(items) or "奖品信息未提供"
 
 
+def read_scanner_status(connection):
+    try:
+        row = connection.execute(
+            "SELECT status_json, updated_at FROM scanner_status WHERE status_id = 1"
+        ).fetchone()
+    except sqlite3.Error:
+        return None
+    if not row:
+        return None
+    try:
+        status = json.loads(row["status_json"])
+    except (TypeError, json.JSONDecodeError):
+        return None
+    if not isinstance(status, dict):
+        return None
+    status["updated_at"] = row["updated_at"]
+    return status
+
+
 def read_red_packets(database_path, limit):
     now = int(datetime.now().timestamp())
     cutoff = (datetime.now() - timedelta(hours=24)).strftime("%Y-%m-%d %H:%M:%S")
     if not database_path.is_file():
-        return {"now": now, "active": [], "expired": [], "error": "尚未找到数据库；请先启动扫描器。"}
+        return {"now": now, "active": [], "expired": [], "scanner_status": None, "error": "尚未找到数据库；请先启动扫描器。"}
     try:
         connection = sqlite3.connect(f"file:{database_path.as_posix()}?mode=ro", uri=True, timeout=2)
         connection.row_factory = sqlite3.Row
         try:
+            scanner_status = read_scanner_status(connection)
             rows = connection.execute(
                 """
                 SELECT p.room_id, p.lot_id, p.sender_name, p.total_price, p.award_count,
@@ -59,7 +79,7 @@ def read_red_packets(database_path, limit):
         finally:
             connection.close()
     except sqlite3.Error as error:
-        return {"now": now, "active": [], "expired": [], "error": f"读取数据库失败：{error}"}
+        return {"now": now, "active": [], "expired": [], "scanner_status": None, "error": f"读取数据库失败：{error}"}
 
     active, expired = [], []
     for row in rows:
@@ -73,7 +93,7 @@ def read_red_packets(database_path, limit):
         (active if packet["end_time"] > now else expired).append(packet)
     active.sort(key=lambda item: item["end_time"])
     expired.sort(key=lambda item: item["end_time"], reverse=True)
-    return {"now": now, "active": active, "expired": expired, "error": None}
+    return {"now": now, "active": active, "expired": expired, "scanner_status": scanner_status, "error": None}
 
 
 class DashboardHandler(SimpleHTTPRequestHandler):
@@ -116,7 +136,7 @@ def main():
     DashboardHandler.packet_limit = args.limit
     address = f"http://127.0.0.1:{args.port}"
     server = ThreadingHTTPServer(("127.0.0.1", args.port), DashboardHandler)
-    print(f"红包仪表盘已启动：{address}（每 2 秒自动刷新，按 Ctrl+C 停止）")
+    print(f"红包仪表盘已启动：{address}（网页每 20 秒自动刷新，按 Ctrl+C 停止）")
     if not args.no_browser:
         webbrowser.open(address)
     try:

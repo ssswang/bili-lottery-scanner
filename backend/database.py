@@ -25,6 +25,7 @@ class LocalDatabase:
         self._ensure_column("anchors", "anchor_id", "TEXT")
         self._ensure_column("red_packets", "is_battery_lottery", "INTEGER NOT NULL DEFAULT 1")
         self._ensure_column("anchor_event", "average_value", "REAL NOT NULL DEFAULT 0")
+        self._ensure_column("ws_auth_cache", "created_at", "TEXT")
 
     def _create_tables(self):
         with self._connection:
@@ -93,9 +94,15 @@ class LocalDatabase:
                     room_id TEXT NOT NULL,
                     token TEXT NOT NULL,
                     hosts_json TEXT NOT NULL,
-                    expires_at INTEGER NOT NULL DEFAULT 0,
+                    created_at TEXT NOT NULL,
                     updated_at TEXT NOT NULL,
                     PRIMARY KEY (account_name, room_id)
+                );
+
+                CREATE TABLE IF NOT EXISTS scanner_status (
+                    status_id INTEGER PRIMARY KEY CHECK (status_id = 1),
+                    status_json TEXT NOT NULL,
+                    updated_at TEXT NOT NULL
                 );
                 """
             )
@@ -166,15 +173,15 @@ class LocalDatabase:
             self._connection.execute(
                 """
                 INSERT INTO ws_auth_cache (
-                    account_name, room_id, token, hosts_json, expires_at, updated_at
+                    account_name, room_id, token, hosts_json, created_at, updated_at
                 ) VALUES (?, ?, ?, ?, ?, ?)
                 ON CONFLICT(account_name, room_id) DO UPDATE SET
                     token=excluded.token,
                     hosts_json=excluded.hosts_json,
-                    expires_at=excluded.expires_at,
+                    created_at=COALESCE(ws_auth_cache.created_at, excluded.created_at),
                     updated_at=excluded.updated_at
                 """,
-                (account_name, room_id, token, hosts_json, 0, now),
+                (account_name, room_id, token, hosts_json, now, now),
             )
 
     def delete_ws_auth_cache(self, account_name, room_id):
@@ -183,6 +190,22 @@ class LocalDatabase:
             self._connection.execute(
                 "DELETE FROM ws_auth_cache WHERE account_name = ? AND room_id = ?",
                 (str(account_name), str(room_id)),
+            )
+
+    def save_scanner_status(self, status):
+        """保存仪表盘使用的扫描器状态快照。"""
+        now = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+        payload = json.dumps(status, ensure_ascii=False, separators=(",", ":"))
+        with self._lock, self._connection:
+            self._connection.execute(
+                """
+                INSERT INTO scanner_status (status_id, status_json, updated_at)
+                VALUES (1, ?, ?)
+                ON CONFLICT(status_id) DO UPDATE SET
+                    status_json=excluded.status_json,
+                    updated_at=excluded.updated_at
+                """,
+                (payload, now),
             )
 
     def save_red_packet(self, room, command, average_value):

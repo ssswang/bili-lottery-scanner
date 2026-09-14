@@ -52,7 +52,7 @@ RED_PACKET_COMMANDS = {
 ANCHOR_LOTTERY_COMMANDS = {
     "ANCHOR_LOT_START": "天选开始",
 }
-ROOM_STOP_COMMANDS = frozenset({"PREPARING", "CUT_OFF", "STOP_LIVE_ROOM_LIST"})
+ROOM_STOP_COMMANDS = frozenset({"PREPARING", "CUT_OFF"})
 
 
 def build_packet(body, operation, protover=1):

@@ -11,6 +11,7 @@
     header { max-width: 1380px; margin: auto; padding: 30px 24px 20px; display: flex; align-items: end; justify-content: space-between; gap: 16px; }
     h1 { margin: 0; font-size: clamp(31px, 4vw, 45px); letter-spacing: -.05em; } h1 span { color: var(--accent); }
     .subtitle, .updated { color: var(--muted); font-size: 16px; margin-top: 8px; } .updated { text-align: right; }
+    .scanner-status { max-width: 1380px; margin: 0 auto 20px; padding: 0 24px; } .status-panel { padding: 18px 20px; border: 1px solid #dbe4f7; border-radius: 18px; background: #fff; box-shadow: 0 8px 24px #263b6a10; } .status-head { display: flex; justify-content: space-between; gap: 12px; align-items: baseline; margin-bottom: 14px; } .status-head strong { font-size: 20px; } .status-time { color: var(--muted); font-size: 14px; } .status-groups { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 16px; } .status-group { padding: 14px; border: 1px solid #e1e7f3; border-radius: 15px; background: #fbfcff; } .status-group h3 { margin: 0 0 11px; font-size: 16px; color: #34425e; } .status-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 10px; } .status-item { padding: 12px; border-radius: 12px; background: #f0f4fc; } .status-item.cache { background: #ecfbf6; } .status-item.new { background: #fff5e4; } .status-item b { display: block; font-size: 23px; line-height: 1.15; } .status-item span { display: block; margin-top: 5px; color: var(--muted); font-size: 13px; font-weight: 600; } .status-detail { grid-column: span 2; }
     main { max-width: 1380px; margin: auto; padding: 0 24px 40px; display: grid; grid-template-columns: minmax(0, 1.1fr) minmax(330px, .9fr); gap: 20px; }
     section { min-width: 0; background: var(--panel); border: 1px solid var(--line); border-radius: 20px; overflow: hidden; box-shadow: 0 10px 30px #263b6a12; }
     .section-head { padding: 20px 22px; display: flex; align-items: center; justify-content: space-between; border-bottom: 1px solid var(--line); } h2 { margin: 0; font-size: 22px; } .count { color: var(--muted); font-size: 16px; font-weight: 600; }
@@ -22,14 +23,38 @@
     .award { line-height: 1.55; font-size: 17px; color: #33405a; } .meta { display: flex; flex-wrap: wrap; gap: 7px; margin-top: 14px; }
     .tag { padding: 5px 9px; border-radius: 7px; background: #edf1f8; color: #536177; font-size: 14px; font-weight: 600; } .tag.value { color: #9b5600; background: #fff0ca; }
     .empty { padding: 40px 12px; text-align: center; color: var(--muted); font-size: 17px; } .error { margin: 0 24px 18px; color: #c43555; font-size: 16px; }
-    @media (max-width: 820px) { header { align-items: start; flex-direction: column; } .updated { text-align: left; } main { grid-template-columns: 1fr; } .queue { max-height: none; } }
+    @media (max-width: 820px) { header { align-items: start; flex-direction: column; } .updated { text-align: left; } .status-groups { grid-template-columns: 1fr; } main { grid-template-columns: 1fr; } .queue { max-height: none; } }
   </style>
 </head>
 <body>
   <header>
-    <div><h1><span>🧧</span> 红包队列</h1><div class="subtitle">扫描器提示的红包 · 本地近实时更新</div></div>
+    <div><h1><span>🧧</span> 红包队列</h1><div class="subtitle">扫描器状态每 3 分钟更新 · 红包网页每 20 秒更新</div></div>
     <div class="updated" id="updated">正在连接本地数据库…</div>
   </header>
+  <div class="scanner-status" id="scanner-status" hidden>
+    <div class="status-panel">
+      <div class="status-head"><strong>📡 扫描器状态</strong><span class="status-time" id="status-time"></span></div>
+      <div class="status-groups">
+        <section class="status-group">
+          <h3>🔑 Token 获取</h3>
+          <div class="status-grid">
+            <div class="status-item cache"><b id="cached-rooms">0</b><span>本轮已有缓存 token</span></div>
+            <div class="status-item new"><b id="uncached-rooms">0</b><span>本轮新发现无缓存房间</span></div>
+            <div class="status-item"><b id="token-queue">0</b><span>当前等待获取 token 的房间</span></div>
+            <div class="status-item"><b id="new-token-requests">0</b><span>本次启动全新获取</span></div>
+          </div>
+        </section>
+        <section class="status-group">
+          <h3>🔌 房间连接</h3>
+          <div class="status-grid">
+            <div class="status-item"><b id="active-connections">0</b><span>当前已连接房间</span></div>
+            <div class="status-item"><b id="total-connections">0</b><span>本次启动连接成功次数</span></div>
+            <div class="status-item status-detail"><b id="cached-token-status">成功 0，失败 0，超时 0</b><span>使用缓存 token 的连接结果</span></div>
+          </div>
+        </section>
+      </div>
+    </div>
+  </div>
   <p class="error" id="error" hidden></p>
   <main>
     <section><div class="section-head"><h2>进行中</h2><span class="count" id="active-count">0 个红包</span></div><div class="queue" id="active"></div></section>
@@ -45,16 +70,30 @@
     }
     function escapeHtml(value) { const el = document.createElement('span'); el.textContent = value ?? ''; return el.innerHTML; }
     function renderQueue(id, packets, now, expired) { document.getElementById(id).innerHTML = packets.length ? packets.map(item => card(item, now, expired)).join('') : `<div class="empty">${expired ? '还没有已过期红包' : '当前没有等待开奖的红包'}</div>`; }
+    function statusValue(status, key) { return Number(status?.[key] || 0).toLocaleString('zh-CN'); }
+    function renderScannerStatus(status) {
+      document.getElementById('scanner-status').hidden = !status;
+      if (!status) return;
+      document.getElementById('cached-rooms').textContent = statusValue(status, 'cached_rooms');
+      document.getElementById('uncached-rooms').textContent = statusValue(status, 'uncached_rooms');
+      document.getElementById('token-queue').textContent = statusValue(status, 'token_queue_size');
+      document.getElementById('active-connections').textContent = statusValue(status, 'active_connections');
+      document.getElementById('total-connections').textContent = statusValue(status, 'total_connections');
+      document.getElementById('cached-token-status').textContent = `成功 ${statusValue(status, 'cached_token_success')}，失败 ${statusValue(status, 'cached_token_failure')}，超时 ${statusValue(status, 'auth_timeouts')}`;
+      document.getElementById('new-token-requests').textContent = statusValue(status, 'new_token_requests');
+      document.getElementById('status-time').textContent = `${status.running ? '扫描中' : '扫描器已停止'} · 状态 ${status.updated_at || '未知时间'}`;
+    }
     async function refresh() {
       try {
         const response = await fetch('/api/red-packets', { cache: 'no-store' }); const data = await response.json();
         document.getElementById('error').hidden = !data.error; document.getElementById('error').textContent = data.error || '';
         renderQueue('active', data.active, data.now, false); renderQueue('expired', data.expired, data.now, true);
         document.getElementById('active-count').textContent = `${data.active.length} 个红包`; document.getElementById('expired-count').textContent = `${data.expired.length} 个红包`;
-        document.getElementById('updated').textContent = `每 2 秒更新 · ${new Date().toLocaleTimeString('zh-CN', { hour12: false })}`;
+        renderScannerStatus(data.scanner_status);
+        document.getElementById('updated').textContent = `最近刷新：${new Date().toLocaleTimeString('zh-CN', { hour12: false })}`;
       } catch (error) { document.getElementById('updated').textContent = '无法连接仪表盘服务'; }
     }
-    refresh(); setInterval(refresh, 2000);
+    refresh(); setInterval(refresh, 20000);
   </script>
 </body>
 </html>

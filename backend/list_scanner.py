@@ -27,10 +27,11 @@ from backend.auth.ws_auth import RiskControlError, get_danmu_info
 
 MAX_HIGH_ENERGY_USERS = 500
 MAX_CUMULATIVE_WATCHERS = 10_000
-DEFAULT_MAX_ACTIVE_ROOMS = 2000
+DEFAULT_MAX_ACTIVE_ROOMS = 4000
 MAX_CONSECUTIVE_352_BEFORE_DANMU_INFO_STOP = 2
 AUTH_REPLY_TIMEOUT_SECONDS = 15
 HEARTBEAT_INTERVAL_SECONDS = 30
+STATUS_UPDATE_SECONDS = 180
 
 
 def log(message):
@@ -78,7 +79,7 @@ class ConnectionStats:
         if used_cached_auth:
             self.cached_auth_confirmed += 1
         if self.connected == 1 or self.connected % 100 == 0:
-            log(f"🔌 房间连接成功 {self.connected} | 当前活跃 {self.active} | 缓存成功 {self.cached_auth_confirmed} | getDanmuInfo {self.danmu_info_requests}")
+            log(f"🔌 房间连接进度：当前已连接房间 {self.active} | 本次启动连接成功次数 {self.connected} | 使用缓存 token 连接成功 {self.cached_auth_confirmed}")
 
     def record_connection_closed(self):
         self.active = max(0, self.active - 1)
@@ -141,9 +142,37 @@ class AsyncListScanner:
         self.connection_slots = asyncio.Semaphore(args.max_active_rooms)
         self.rate_limiter = AsyncDanmuInfoRateLimiter(args.max_get_danmu_info_per_minute, jitter_seconds=args.get_danmu_info_jitter)
         self.stats, self.wbi_keys = ConnectionStats(), None
-        self.room_queue, self.queued_room_ids = asyncio.Queue(), set()
-        self.room_workers, self.closed_room_ids, self.notified_lot_ids = [], set(), set()
+        self.token_room_queue, self.queued_room_ids = asyncio.Queue(), set()
+        self.pending_token_room_ids = set()
+        self.room_workers, self.cached_room_tasks = [], set()
+        self.closed_room_ids, self.notified_lot_ids = set(), set()
         self.database_queue, self.notification_queue = asyncio.Queue(), asyncio.Queue()
+        self.latest_cached_rooms = self.latest_uncached_rooms = 0
+
+    def status_snapshot(self, running=True):
+        return {
+            "running": running,
+            "cached_rooms": self.latest_cached_rooms,
+            "uncached_rooms": self.latest_uncached_rooms,
+            "token_queue_size": len(self.pending_token_room_ids),
+            "active_connections": self.stats.active,
+            "total_connections": self.stats.auth_confirmed,
+            "cached_token_success": self.stats.cached_auth_confirmed,
+            "cached_token_failure": self.stats.cached_auth_failed,
+            "auth_timeouts": self.stats.auth_timeouts,
+            "new_token_requests": self.stats.danmu_info_requests,
+        }
+
+    async def status_updater(self):
+        while not self.stop_event.is_set():
+            try:
+                await asyncio.to_thread(self.database.save_scanner_status, self.status_snapshot())
+            except Exception as error:
+                log(f"⚠️ 扫描器状态写入失败：{error}")
+            try:
+                await asyncio.wait_for(self.stop_event.wait(), STATUS_UPDATE_SECONDS)
+            except asyncio.TimeoutError:
+                pass
 
     async def database_worker(self):
         while True:
@@ -176,28 +205,34 @@ class AsyncListScanner:
     async def get_auth_info(self, room_id):
         cached = await self.load_cache(room_id)
         if cached:
+            self.pending_token_room_ids.discard(room_id)
             return cached, True
+        self.pending_token_room_ids.add(room_id)
         if self.stats.danmu_info_blocked or not await self.rate_limiter.wait_for_slot(self.stop_event):
+            self.pending_token_room_ids.discard(room_id)
             return None, False
         async with self.http_lock:
             cached = await self.load_cache(room_id)
             if cached:
+                self.pending_token_room_ids.discard(room_id)
                 return cached, True
             if self.stats.danmu_info_blocked:
+                self.pending_token_room_ids.discard(room_id)
                 return None, False
             self.stats.record_danmu_info_request()
             token, hosts = await asyncio.to_thread(get_danmu_info, self.session, room_id, self.wbi_keys)
             self.stats.record_danmu_info_success()
             await asyncio.to_thread(self.database.save_ws_auth_cache, self.args.account, room_id, token, hosts)
+            self.pending_token_room_ids.discard(room_id)
             return (token, hosts), False
 
     async def invalidate_cache(self, room_id):
         await asyncio.to_thread(self.database.delete_ws_auth_cache, self.args.account, room_id)
 
     async def queue_worker(self, worker_number):
-        """从待处理队列取房间；一个工作协程在房间停止监听后再处理下一项。"""
+        """处理需要新 token 的房间；缓存命中房间由独立任务直接连接。"""
         while not self.stop_event.is_set():
-            room = await self.room_queue.get()
+            room = await self.token_room_queue.get()
             room_id = room["room_id"]
             try:
                 if room_id not in self.closed_room_ids:
@@ -208,7 +243,22 @@ class AsyncListScanner:
                 log(f"⚠️ 队列工作协程 {worker_number} | 房间 {room_id} 异常：{error}")
             finally:
                 self.queued_room_ids.discard(room_id)
-                self.room_queue.task_done()
+                self.pending_token_room_ids.discard(room_id)
+                self.token_room_queue.task_done()
+
+    async def cached_room_worker(self, room):
+        """缓存 token 命中后立即尝试建立连接，不等待新 token 队列。"""
+        room_id = room["room_id"]
+        try:
+            if room_id not in self.closed_room_ids:
+                await self.watch_room(room)
+        except asyncio.CancelledError:
+            raise
+        except Exception as error:
+            log(f"⚠️ 缓存 token 房间 {room_id} 异常：{error}")
+        finally:
+            self.queued_room_ids.discard(room_id)
+            self.pending_token_room_ids.discard(room_id)
 
     async def enqueue_red_packet(self, room, command, average):
         data, room_id = command.get("data") or {}, room["room_id"]
@@ -353,26 +403,36 @@ class AsyncListScanner:
     async def refresh_rooms(self):
         rooms, self.wbi_keys = await asyncio.to_thread(build_area_rooms, self.session)
         current_ids = {room["room_id"] for room in rooms}
-        self.closed_room_ids.intersection_update(current_ids)
+        # 关闭过的房间只要重新出现在大分区列表，即恢复为可连接状态。
+        self.closed_room_ids.difference_update(current_ids)
         cached, uncached = [], []
         for room in rooms:
             room_id = room["room_id"]
             if room_id in self.queued_room_ids or room_id in self.closed_room_ids:
                 continue
             (cached if await self.load_cache(room_id) else uncached).append(room)
-        for room in cached + uncached:
+        for room in cached:
             self.queued_room_ids.add(room["room_id"])
-            self.room_queue.put_nowait(room)
-        log(f"📊 大分区队列：本轮新增 token 缓存命中 {len(cached)}，全新待取 {len(uncached)} | 待获取 token 队列 {self.room_queue.qsize()} | 实际房间连接 {self.stats.active} | 累计连接 {self.stats.auth_confirmed}（token 读取缓存：成功 {self.stats.cached_auth_confirmed}，失败 {self.stats.cached_auth_failed}，超时 {self.stats.auth_timeouts}） | 全新获取累计 {self.stats.danmu_info_requests} 次。")
+            task = asyncio.create_task(self.cached_room_worker(room), name=f"cached-room-{room['room_id']}")
+            self.cached_room_tasks.add(task)
+            task.add_done_callback(self.cached_room_tasks.discard)
+        for room in uncached:
+            self.queued_room_ids.add(room["room_id"])
+            self.pending_token_room_ids.add(room["room_id"])
+            self.token_room_queue.put_nowait(room)
+        self.latest_cached_rooms, self.latest_uncached_rooms = len(cached), len(uncached)
+        log(f"🔑 Token 获取：本轮已有缓存 token {len(cached)} | 本轮新发现无缓存房间 {len(uncached)} | 当前等待获取 token 的房间 {len(self.pending_token_room_ids)} | 本次启动全新获取 {self.stats.danmu_info_requests}")
+        log(f"🔌 房间连接：当前已连接房间 {self.stats.active} | 本次启动连接成功次数 {self.stats.auth_confirmed} | 使用缓存 token 的连接结果：成功 {self.stats.cached_auth_confirmed}，失败 {self.stats.cached_auth_failed}，超时 {self.stats.auth_timeouts}")
 
     async def run(self):
         database_task, notification_task = asyncio.create_task(self.database_worker()), asyncio.create_task(self.notification_worker())
+        status_task = asyncio.create_task(self.status_updater())
         self.ws_session = aiohttp.ClientSession(connector=aiohttp.TCPConnector(limit=0, ttl_dns_cache=300))
         self.room_workers = [
             asyncio.create_task(self.queue_worker(index + 1), name=f"room-queue-{index + 1}")
             for index in range(self.args.max_active_rooms)
         ]
-        log(f"异步父分区 WS 队列扫描已启动：账号 {self.args.account}，天选事件：{'开启' if PROCESS_ANCHOR_LOTTERY else '关闭'}。")
+        log(f"红包扫描器已启动：账号 {self.args.account}，天选事件：{'开启' if PROCESS_ANCHOR_LOTTERY else '关闭'}。")
         try:
             while not self.stop_event.is_set():
                 try:
@@ -387,8 +447,14 @@ class AsyncListScanner:
                     pass
         finally:
             self.stop_event.set()
+            await asyncio.gather(status_task, return_exceptions=True)
+            await asyncio.to_thread(self.database.save_scanner_status, self.status_snapshot(running=False))
+            cached_tasks = tuple(self.cached_room_tasks)
+            for task in cached_tasks:
+                task.cancel()
             for task in self.room_workers:
                 task.cancel()
+            await asyncio.gather(*cached_tasks, return_exceptions=True)
             await asyncio.gather(*self.room_workers, return_exceptions=True)
             await self.database_queue.join()
             await self.notification_queue.join()

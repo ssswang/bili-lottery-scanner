@@ -72,7 +72,7 @@ Useful options:
 | `--min-average` | `10` | Minimum average packet value in batteries |
 | `--max-get-danmu-info-per-minute` | `6` | Maximum new WebSocket credential requests per minute |
 | `--get-danmu-info-jitter` | `1.5` | Maximum extra random delay between credential requests |
-| `--max-active-rooms` | `2000` | Maximum concurrent room connections |
+| `--max-active-rooms` | `4000` | Maximum concurrent room connections |
 | `--discord-webhook` | empty | Temporary Discord webhook for this run |
 | `--database` | `data/red_packet_monitor.db` | SQLite database path |
 
