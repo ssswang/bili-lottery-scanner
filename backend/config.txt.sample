@@ -1,14 +1,20 @@
 # Wait after a ranking refresh failure or authorization failure, in seconds.
 RISK_BACKOFF_SECONDS=60
 
-# Discord notifications: 1 = enabled, 0 = console output only.
+# Database notifier Discord channel: 1 = enabled, 0 = disabled.
 DISCORD_ENABLED=0
 DISCORD_WEBHOOK="https://discord.com/api/webhooks/..."
 
-# Anchor lottery (天选) events: 1 = monitor and notify, 0 = disabled (default).
+# Database notifier QQ channel via NapCat (OneBot 11 HTTP): 1 = enabled, 0 = disabled.
+QQ_ENABLED=0
+NAPCAT_HTTP_URL="http://127.0.0.1:3000"
+NAPCAT_GROUP_ID="123456,654321"
+NAPCAT_TOKEN=""
+
+# Anchor lottery (天选) events: 1 = monitor and store, 0 = disabled (default).
 PROCESS_ANCHOR_LOTTERY=0
 
-# Minimum average value (batteries) required before output and Discord notification.
+# Minimum average value (batteries) required before output and database storage.
 RED_PACKET_MIN_AVERAGE=10
 ANCHOR_LOTTERY_MIN_AVERAGE=10
 

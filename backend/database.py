@@ -104,6 +104,14 @@ class LocalDatabase:
                     status_json TEXT NOT NULL,
                     updated_at TEXT NOT NULL
                 );
+
+                CREATE TABLE IF NOT EXISTS notification_log (
+                    event_type TEXT NOT NULL,
+                    room_id TEXT NOT NULL,
+                    lot_id TEXT NOT NULL,
+                    notified_at TEXT NOT NULL,
+                    PRIMARY KEY (event_type, room_id, lot_id)
+                );
                 """
             )
 
@@ -381,6 +389,87 @@ class LocalDatabase:
                 ),
             )
         return True
+
+    def pending_notifications(self, include_expired=False):
+        """读取尚未发送通知的记录；默认跳过已经开奖的项目。"""
+        now = int(datetime.now().timestamp())
+        red_expiry_filter = "" if include_expired else "AND (p.end_time IS NULL OR p.end_time > ?)"
+        anchor_expiry_filter = "" if include_expired else "AND (p.end_time IS NULL OR p.end_time > ?)"
+        red_parameters = () if include_expired else (now,)
+        anchor_parameters = () if include_expired else (now,)
+        with self._lock:
+            red_rows = self._connection.execute(
+                f"""
+                SELECT p.room_id, p.lot_id, COALESCE(r.host_name, '未知主播') AS host_name,
+                       p.sender_name, p.total_price, p.award_count, p.join_requirement,
+                       p.end_time, p.raw_data_json
+                FROM red_packets AS p
+                LEFT JOIN rooms AS r ON r.room_id = p.room_id
+                LEFT JOIN notification_log AS n
+                    ON n.event_type = 'red_packet' AND n.room_id = p.room_id AND n.lot_id = p.lot_id
+                WHERE n.lot_id IS NULL {red_expiry_filter}
+                ORDER BY p.end_time ASC, p.recorded_at ASC
+                """,
+                red_parameters,
+            ).fetchall()
+            anchor_rows = self._connection.execute(
+                f"""
+                SELECT p.room_id, p.lot_id, COALESCE(r.host_name, '未知主播') AS host_name,
+                       p.award_name, p.award_count, p.total_price, p.requirement,
+                       p.end_time
+                FROM anchor_event AS p
+                LEFT JOIN rooms AS r ON r.room_id = p.room_id
+                LEFT JOIN notification_log AS n
+                    ON n.event_type = 'anchor_lottery' AND n.room_id = p.room_id AND n.lot_id = p.lot_id
+                WHERE n.lot_id IS NULL {anchor_expiry_filter}
+                ORDER BY p.end_time ASC, p.recorded_at ASC
+                """,
+                anchor_parameters,
+            ).fetchall()
+
+        events = []
+        for row in red_rows:
+            events.append(
+                {
+                    "event_type": "red_packet",
+                    "room_id": row[0],
+                    "lot_id": row[1],
+                    "host_name": row[2],
+                    "sender_name": row[3],
+                    "total_price": row[4],
+                    "award_count": row[5],
+                    "requirement": row[6],
+                    "end_time": row[7],
+                    "raw_data_json": row[8],
+                }
+            )
+        for row in anchor_rows:
+            events.append(
+                {
+                    "event_type": "anchor_lottery",
+                    "room_id": row[0],
+                    "lot_id": row[1],
+                    "host_name": row[2],
+                    "award_name": row[3],
+                    "award_count": row[4],
+                    "total_price": row[5],
+                    "requirement": row[6],
+                    "end_time": row[7],
+                }
+            )
+        return sorted(events, key=lambda item: item.get("end_time") or 2**63)
+
+    def mark_notification_sent(self, event_type, room_id, lot_id):
+        """仅在至少一个通知渠道送达后记录，失败项目可在下次继续尝试。"""
+        now = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+        with self._lock, self._connection:
+            self._connection.execute(
+                """
+                INSERT OR IGNORE INTO notification_log (event_type, room_id, lot_id, notified_at)
+                VALUES (?, ?, ?, ?)
+                """,
+                (str(event_type), str(room_id), str(lot_id), now),
+            )
 
     def close(self):
         with self._lock:

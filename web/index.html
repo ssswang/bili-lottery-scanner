@@ -64,6 +64,12 @@
     const requirement = text => text || '无要求';
     const formatTime = time => time ? new Date(time * 1000).toLocaleString('zh-CN', { hour12: false }) : '未知时间';
     const countdown = (end, now) => { const seconds = Math.max(0, end - now); const m = Math.floor(seconds / 60), s = seconds % 60; return seconds ? `${m}:${String(s).padStart(2, '0')} 后开奖` : '已过期'; };
+    function updateCountdowns() {
+      const now = Math.floor(Date.now() / 1000);
+      document.querySelectorAll('.timer[data-end]').forEach(timer => {
+        timer.textContent = countdown(Number(timer.dataset.end), now);
+      });
+    }
     function card(packet, now, expired) {
       const room = encodeURIComponent(packet.room_id); const host = escapeHtml(packet.host_name || '未知主播');
       return `<article class="card ${expired ? 'expired' : 'active'}"><div class="topline"><div class="name">${host}</div><a class="room" href="https://live.bilibili.com/${room}" target="_blank" rel="noreferrer">房间 ${escapeHtml(packet.room_id)}</a></div><div class="timer" data-end="${packet.end_time}">${countdown(packet.end_time, now)}</div><div class="award">🎁 ${escapeHtml(packet.awards)}</div><div class="meta"><span class="tag value">包均 ${Number(packet.average_value).toFixed(2)} 电池</span><span class="tag">总价值 ${packet.total_price} 电池</span><span class="tag">${requirement(packet.requirement)}</span><span class="tag">${packet.award_count || 0} 份</span><span class="tag">开奖 ${formatTime(packet.end_time)}</span></div></article>`;
@@ -93,7 +99,7 @@
         document.getElementById('updated').textContent = `最近刷新：${new Date().toLocaleTimeString('zh-CN', { hour12: false })}`;
       } catch (error) { document.getElementById('updated').textContent = '无法连接仪表盘服务'; }
     }
-    refresh(); setInterval(refresh, 20000);
+    refresh(); setInterval(refresh, 20000); setInterval(updateCountdowns, 1000);
   </script>
 </body>
 </html>

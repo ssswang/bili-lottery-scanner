@@ -51,10 +51,24 @@ RISK_BACKOFF_SECONDS = get_int(CONFIG, "RISK_BACKOFF_SECONDS", 60, minimum=60)
 DISCORD_ENABLED = get_int(CONFIG, "DISCORD_ENABLED", 0) == 1
 DISCORD_WEBHOOK = CONFIG.get("DISCORD_WEBHOOK", "")
 
-# 天选抽奖事件：1 = 解析、输出并发送 Discord 通知；默认关闭。
+# QQ 群通知配置（NapCat / OneBot 11 HTTP）
+QQ_ENABLED = get_int(CONFIG, "QQ_ENABLED", 0) == 1
+NAPCAT_HTTP_URL = CONFIG.get("NAPCAT_HTTP_URL", "")
+NAPCAT_TOKEN = CONFIG.get("NAPCAT_TOKEN", "")
+NAPCAT_GROUP_IDS = []
+for group_id in CONFIG.get("NAPCAT_GROUP_ID", "").split(","):
+    group_id = group_id.strip()
+    if not group_id:
+        continue
+    if group_id.isdigit():
+        NAPCAT_GROUP_IDS.append(int(group_id))
+    else:
+        print(f"⚠️ 配置 NAPCAT_GROUP_ID 含无效群号 {group_id}，已忽略。")
+
+# 天选抽奖事件：1 = 解析、输出并写入数据库；默认关闭。
 PROCESS_ANCHOR_LOTTERY = get_int(CONFIG, "PROCESS_ANCHOR_LOTTERY", 0) == 1
 
-# 仅当奖品总价值除以份数达到阈值时，才输出和发送对应事件通知。
+# 仅当奖品总价值除以份数达到阈值时，才输出并写入数据库。
 RED_PACKET_MIN_AVERAGE = get_float(CONFIG, "RED_PACKET_MIN_AVERAGE", 10, minimum=0)
 ANCHOR_LOTTERY_MIN_AVERAGE = get_float(
     CONFIG, "ANCHOR_LOTTERY_MIN_AVERAGE", 10, minimum=0

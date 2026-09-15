@@ -18,7 +18,6 @@ except ImportError as error:
 
 from backend.auth.api_auth import USER_AGENT, build_cookie_header, get_cookie_value, get_wbi_keys
 from backend.config import ANCHOR_LOTTERY_MIN_AVERAGE, PROCESS_ANCHOR_LOTTERY, RED_PACKET_MIN_AVERAGE, RED_PACKET_SOUND_ENABLED, RISK_BACKOFF_SECONDS, ROOM_BLACKLIST
-from backend.discord_notifier import DiscordNotifier
 from backend.database import LocalDatabase
 from backend.area_room_queue import AreaRoomQueueBuilder
 from backend.room_watcher import ANCHOR_LOTTERY_COMMANDS, OP_AUTH, OP_HEARTBEAT, RED_PACKET_COMMANDS, ROOM_STOP_COMMANDS, anchor_lottery_details, anchor_lottery_summary, build_packet, build_wss_url, get_account_session, parse_auth_reply, parse_packets, red_packet_average, red_packet_summary
@@ -185,7 +184,7 @@ class AsyncListScanner:
     def __init__(self, args):
         self.args = args
         self.session = get_account_session(args.account)
-        self.notifier, self.database = DiscordNotifier(args.discord_webhook), LocalDatabase(args.database)
+        self.database = LocalDatabase(args.database)
         self.stop_event, self.http_lock = asyncio.Event(), asyncio.Lock()
         self.connection_slots = asyncio.Semaphore(args.max_active_rooms)
         self.rate_limiter = AsyncDanmuInfoRateLimiter(args.max_get_danmu_info_per_minute, jitter_seconds=args.get_danmu_info_jitter)
@@ -198,7 +197,7 @@ class AsyncListScanner:
         self.room_workers, self.cached_room_tasks = [], set()
         self.closed_room_ids, self.notified_lot_ids = set(), set()
         self.low_online_room_ids = set()
-        self.database_queue, self.notification_queue = asyncio.Queue(), asyncio.Queue()
+        self.database_queue = asyncio.Queue()
         self.latest_cached_rooms = self.latest_uncached_rooms = 0
 
     def status_snapshot(self, running=True):
@@ -238,18 +237,6 @@ class AsyncListScanner:
                 log(f"⚠️ 本地数据库写入失败：{error}")
             finally:
                 self.database_queue.task_done()
-
-    async def notification_worker(self):
-        while True:
-            job = await self.notification_queue.get()
-            try:
-                if job is None:
-                    return
-                await asyncio.to_thread(self.notifier.send_lottery_notification, **job)
-            except Exception as error:
-                log(f"⚠️ Discord 通知发送失败：{error}")
-            finally:
-                self.notification_queue.task_done()
 
     async def load_cache(self, room_id):
         return await asyncio.to_thread(self.database.load_ws_auth_cache, self.args.account, room_id)
@@ -338,18 +325,6 @@ class AsyncListScanner:
         if lot_id:
             self.notified_lot_ids.add(key)
         await self.database_queue.put((self.database.save_red_packet, (room, command, average)))
-        awards = data.get("awards") or []
-        gifts = "\n".join(f"🎁 {item.get('gift_name', '未知礼物')} × {item.get('num', 0)}" for item in awards if isinstance(item, dict)) or "奖品信息未提供"
-        try:
-            total_price = int(data.get("total_price", 0)) // 100
-        except (TypeError, ValueError):
-            total_price = 0
-        requirement = {0: "无要求", 1: "需要关注", 2: "需要粉丝勋章", 3: "需要上舰"}.get(data.get("join_requirement"), "未知")
-        try:
-            draw_time = datetime.fromtimestamp(int(data.get("end_time"))).strftime("%Y-%m-%d %H:%M:%S")
-        except (TypeError, ValueError, OSError):
-            draw_time = "未知"
-        await self.notification_queue.put({"host_name": room["host_name"], "room_id": room_id, "gift_text": gifts, "requirement_str": requirement, "total_price": total_price, "end_time_str": draw_time, "sender_name": data.get("sender_name") or data.get("uname") or "", "area_info": "、".join(room.get("area_names") or [])})
         return True
 
     async def enqueue_anchor_lottery(self, room, command, details):
@@ -360,7 +335,6 @@ class AsyncListScanner:
         if lot_id:
             self.notified_lot_ids.add(key)
         await self.database_queue.put((self.database.save_anchor_event, (room, command, details)))
-        await self.notification_queue.put({"host_name": room["host_name"], "room_id": room_id, "gift_text": details["gift_text"], "requirement_str": details["requirement"], "total_price": details["total_price"], "end_time_str": details["draw_time"], "area_info": "、".join(room.get("area_names") or [])})
 
     async def receive(self, websocket, timeout):
         try:
@@ -523,7 +497,7 @@ class AsyncListScanner:
         log(f"🔌 房间连接：当前已连接房间 {self.stats.active} | 本次启动连接成功次数 {self.stats.auth_confirmed} | 使用缓存 token 的连接结果：成功 {self.stats.cached_auth_confirmed}，失败 {self.stats.cached_auth_failed}，超时 {self.stats.auth_timeouts}")
 
     async def run(self):
-        database_task, notification_task = asyncio.create_task(self.database_worker()), asyncio.create_task(self.notification_worker())
+        database_task = asyncio.create_task(self.database_worker())
         status_task = asyncio.create_task(self.status_updater())
         self.ws_session = aiohttp.ClientSession(connector=aiohttp.TCPConnector(limit=0, ttl_dns_cache=300))
         self.room_workers = [
@@ -555,10 +529,8 @@ class AsyncListScanner:
             await asyncio.gather(*cached_tasks, return_exceptions=True)
             await asyncio.gather(*self.room_workers, return_exceptions=True)
             await self.database_queue.join()
-            await self.notification_queue.join()
             await self.database_queue.put(None)
-            await self.notification_queue.put(None)
-            await asyncio.gather(database_task, notification_task, return_exceptions=True)
+            await asyncio.gather(database_task, return_exceptions=True)
             await self.ws_session.close()
             await asyncio.to_thread(self.database.close)
 
@@ -570,7 +542,6 @@ def parse_args():
     parser.add_argument("--reconnect-delay", type=int, default=10)
     parser.add_argument("--min-average", type=float, default=RED_PACKET_MIN_AVERAGE)
     parser.add_argument("--min-anchor-average", type=float, default=ANCHOR_LOTTERY_MIN_AVERAGE)
-    parser.add_argument("--discord-webhook", default=None)
     parser.add_argument("--database", default="data/red_packet_monitor.db")
     parser.add_argument("--max-get-danmu-info-per-minute", type=int, default=6)
     parser.add_argument("--get-danmu-info-jitter", type=float, default=1.5)
