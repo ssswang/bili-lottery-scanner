@@ -60,6 +60,9 @@ ANCHOR_LOTTERY_MIN_AVERAGE = get_float(
     CONFIG, "ANCHOR_LOTTERY_MIN_AVERAGE", 10, minimum=0
 )
 
+# Windows 红包提示音：1 = 播放系统提示音；默认关闭。
+RED_PACKET_SOUND_ENABLED = get_int(CONFIG, "RED_PACKET_SOUND_ENABLED", 0) == 1
+
 # 不建立 WebSocket 监视的房间 ID；config.txt 可用逗号分隔的 ROOM_BLACKLIST 追加。
 DEFAULT_ROOM_BLACKLIST = {"2233", "25383355"}
 ROOM_BLACKLIST = frozenset(

@@ -39,8 +39,11 @@ DISCORD_WEBHOOK=""
 PROCESS_ANCHOR_LOTTERY=0
 RED_PACKET_MIN_AVERAGE=10
 ANCHOR_LOTTERY_MIN_AVERAGE=10
+RED_PACKET_SOUND_ENABLED=0
 ROOM_BLACKLIST=""
 ```
+
+Set `RED_PACKET_SOUND_ENABLED=1` to play the Windows system alert sound when a qualifying red packet is first processed. It is disabled by default.
 
 Set `DISCORD_ENABLED=1` and `DISCORD_WEBHOOK` to receive Discord notifications.
 
@@ -72,9 +75,11 @@ Useful options:
 | `--min-average` | `10` | Minimum average packet value in batteries |
 | `--max-get-danmu-info-per-minute` | `6` | Maximum new WebSocket credential requests per minute |
 | `--get-danmu-info-jitter` | `1.5` | Maximum extra random delay between credential requests |
-| `--max-active-rooms` | `4000` | Maximum concurrent room connections |
+| `--max-active-rooms` | `1500` | Maximum concurrent room connections (upper limit: 1500) |
 | `--discord-webhook` | empty | Temporary Discord webhook for this run |
 | `--database` | `data/red_packet_monitor.db` | SQLite database path |
+
+New room connections start at no more than 100 per minute. When all 1,500 slots are occupied, pending rooms wait for a slot; rooms with fewer than three high-energy users are disconnected when their `ONLINE_RANK_COUNT` event arrives.
 
 ## Dashboard
 
@@ -99,7 +104,7 @@ backend/
   database.py                 SQLite persistence
   discord_notifier.py         Discord notifications
   config.txt.sample           Configuration template
-  test_cached_ws_tokens.py    Cached credential test
+  test/                       Manual diagnostic scripts
 data/                         Local sessions, device data, and SQLite database
 web/index.html                Dashboard page
 list_scanner_acct1.bat        Scanner launcher

@@ -48,11 +48,13 @@ OP_AUTH_REPLY = 8
 
 RED_PACKET_COMMANDS = {
     "POPULARITY_RED_POCKET_START": "红包开始",
+    "POPULARITY_RED_POCKET_V2_START": "红包开始",
 }
 ANCHOR_LOTTERY_COMMANDS = {
     "ANCHOR_LOT_START": "天选开始",
 }
 ROOM_STOP_COMMANDS = frozenset({"PREPARING", "CUT_OFF"})
+STOP_LIVE_ROOM_LIST_COMMAND = "STOP_LIVE_ROOM_LIST"
 
 
 def build_packet(body, operation, protover=1):
@@ -168,16 +170,18 @@ def red_packet_summary(command):
         except (TypeError, ValueError, OSError):
             return "未知"
 
-    if name == "POPULARITY_RED_POCKET_NEW":
+    if name in {"POPULARITY_RED_POCKET_NEW", "POPULARITY_RED_POCKET_V2_NEW"}:
         sender = data.get("uname") or data.get("sender_name") or "未知"
         gift = data.get("gift_name") or "红包"
         count = data.get("num", 1)
+        price = data.get("price")
+        price_text = f" | 标称价格: {price}" if price not in (None, "") else ""
         return (
             f"红包 ID: {lot_id} | 发送者: {sender} | 礼物: {gift} × {count} | "
-            f"开始时间: {format_time(data.get('start_time'))}"
+            f"开始时间: {format_time(data.get('start_time'))}{price_text}"
         )
 
-    if name == "POPULARITY_RED_POCKET_START":
+    if name in {"POPULARITY_RED_POCKET_START", "POPULARITY_RED_POCKET_V2_START"}:
         sender = data.get("sender_name") or data.get("uname") or "未知"
         awards = data.get("awards") or []
         award_text = "、".join(
@@ -208,7 +212,7 @@ def red_packet_summary(command):
 
 def red_packet_average(command):
     """返回红包包均电池价值；信息不足或不是开始事件时返回 None。"""
-    if command.get("cmd", "").split(":", 1)[0] != "POPULARITY_RED_POCKET_START":
+    if command.get("cmd", "").split(":", 1)[0] not in {"POPULARITY_RED_POCKET_START", "POPULARITY_RED_POCKET_V2_START"}:
         return None
     data = command.get("data") or {}
     try:
